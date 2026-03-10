@@ -25,9 +25,11 @@ Prerequisites:
 
 import argparse
 import logging
+import threading
 import time
 
 import rclpy
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 
@@ -479,9 +481,15 @@ def main():
 
     rclpy.init()
     node = GripperTestNode()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    # Spin executor in background thread so service futures get processed
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
     try:
         passed, total = node.run_tests(test_name=args.test)
     finally:
+        executor.shutdown(timeout_sec=2.0)
         node.destroy_node()
         rclpy.shutdown()
 
