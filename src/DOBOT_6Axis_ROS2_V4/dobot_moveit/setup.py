@@ -6,7 +6,7 @@ package_name = 'dobot_moveit'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -16,15 +16,20 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='FTX',
-    maintainer_email='futingxing@dobot-robot.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='IUDC',
+    maintainer_email='iudc@example.com',
+    description='MoveIt integration for Dobot CR20',
+    license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-        'joint_states    = dobot_moveit.joint_states:main',
-        'action_move_server    = dobot_moveit.action_move_server:main',
+            'joint_states = dobot_moveit.joint_states:main',
+            'action_move_server = dobot_moveit.action_move_server:main',
+            'vision_coordinator = dobot_moveit.vision_coordinator:main',
+            'calibration_node = dobot_moveit.calibration_node:main',
+            'depalletizer = dobot_moveit.depalletizer:main',
+            'scene_manager = dobot_moveit.scene_manager:main',
+            'collision_calibrator = dobot_moveit.collision_calibrator:main',
         ],
     },
 )
