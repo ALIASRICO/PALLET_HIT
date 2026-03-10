@@ -557,11 +557,12 @@ class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
             print(f"    Place position (m): [{place_pos[0]:.4f}, {place_pos[1]:.4f}, {place_pos[2]:.4f}]")
             print()
 
-            rclpy.shutdown()
+            # Signal executor to stop (main() handles shutdown)
+            raise SystemExit(0)
 
         except KeyboardInterrupt:
             print("\n\n    ⚠️  Calibración interrumpida — NO se guardó ningún archivo.")
-            rclpy.shutdown()
+            raise SystemExit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -578,12 +579,15 @@ def main(args=None):
         executor = _MTE(num_threads=4)
         executor.add_node(node)
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         if node is not None:
             node.destroy_node()
-        _rclpy.shutdown()
+        try:
+            _rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
