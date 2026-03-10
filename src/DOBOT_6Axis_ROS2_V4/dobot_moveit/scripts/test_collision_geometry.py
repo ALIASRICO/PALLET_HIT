@@ -164,13 +164,13 @@ def test_validate_config_valid():
     """Test 9: validate_config with a complete valid config."""
     config = {
         'objects': {
-            'mesa':          {'corners': [[300, 800, -500], [700, 1200, -500]], 'height_mm': 200},
-            'cinta':         {'corners': [[400, -500, -300], [600, -300, -300]], 'height_mm': 100},
-            'suelo':         {'z_mm': -510},
-            'techo':         {'z_mm': 800},
-            'poste_camara':  {'bottom': [500, 1000, 200], 'width_mm': 80},
-            'pared_izq':     {'points': [[0, 0, 0], [1000, 0, 0]]},
-            'pared_der':     {'points': [[0, 1500, 0], [1000, 1500, 0]]},
+            'suelo':                {'z_mm': -510},
+            'techo':                {'z_mm': 800},
+            'mesa_trabajo':         {'corner1_mm': [300, 800, -500], 'corner2_mm': [700, 1200, -500], 'height_mm': 200},
+            'pallet_jugos':         {'corner1_mm': [400, 800, -505], 'corner2_mm': [700, 1100, -505], 'height_mm': 150},
+            'cinta_transportadora': {'corner1_mm': [400, -500, -300], 'corner2_mm': [600, -300, -300], 'height_mm': 100},
+            'camara_soporte':       {'bottom_mm': [500, 1000, 200], 'width_mm': 80},
+            'pared':                {'point1_mm': [0, 0, 0], 'point2_mm': [1000, 0, 0]},
         },
         'place_position_m': [0.5, -0.4, -0.28],
     }
@@ -184,13 +184,13 @@ def test_validate_config_ceiling_below_floor():
     """Test 10: validate_config with ceiling_z < floor_z -> invalid."""
     config = {
         'objects': {
-            'mesa':          {},
-            'cinta':         {},
-            'suelo':         {'z_mm': 800},
-            'techo':         {'z_mm': -510},
-            'poste_camara':  {},
-            'pared_izq':     {},
-            'pared_der':     {},
+            'suelo':                {'z_mm': 800},
+            'techo':                {'z_mm': -510},
+            'mesa_trabajo':         {},
+            'pallet_jugos':         {},
+            'cinta_transportadora': {},
+            'camara_soporte':       {},
+            'pared':                {},
         },
         'place_position_m': [0.5, -0.4, -0.28],
     }

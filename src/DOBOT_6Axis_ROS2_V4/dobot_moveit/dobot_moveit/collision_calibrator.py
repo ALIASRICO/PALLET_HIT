@@ -187,8 +187,13 @@ def validate_config(config):
     errors = []
 
     expected_objects = [
-        'mesa', 'cinta', 'suelo', 'techo',
-        'poste_camara', 'pared_izq', 'pared_der',
+        'suelo',
+        'techo',
+        'mesa_trabajo',
+        'pallet_jugos',
+        'cinta_transportadora',
+        'camara_soporte',
+        'pared',
     ]
 
     if 'objects' not in config:
