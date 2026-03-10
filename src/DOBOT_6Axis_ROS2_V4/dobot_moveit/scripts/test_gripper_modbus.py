@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ⚠️ SAFETY: This script does NOT move the robot arm — gripper operations ONLY
 """
 Standalone AG-95 Gripper Modbus Test Script
 Tests each Modbus operation against the physical Dobot CR20.
@@ -50,7 +51,7 @@ SRV_NS = '/dobot_bringup_ros2/srv'
 MODBUS_IP       = '192.168.5.1'
 MODBUS_PORT     = 60000
 MODBUS_SLAVE_ID = 1
-MODBUS_IS_RTU   = 1
+MODBUS_IS_RTU   = 0  # TCP mode — must match depalletizer.py GRIPPER_MODBUS_IS_RTU
 MODBUS_INDEX    = 0
 
 REG_INIT        = 256
@@ -117,6 +118,7 @@ class GripperTestNode(Node):
 
         # results tracking
         self._results: list[tuple[str, bool, str]] = []
+        self._modbus_index: int = MODBUS_INDEX  # assigned dynamically after ModbusCreate
 
     # ------------------------------------------------------------------
     # Service call helper — identical pattern to depalletizer.py:250-271
@@ -151,7 +153,7 @@ class GripperTestNode(Node):
     def _set_reg(self, addr, value):
         """Write a U16 register. val_tab MUST have curly braces: '{value}'."""
         req = SetHoldRegs.Request()
-        req.index    = MODBUS_INDEX
+        req.index    = self._modbus_index
         req.addr     = addr
         req.count    = 1
         req.val_tab  = '{' + str(value) + '}'   # e.g. "{165}" — critical
@@ -165,7 +167,7 @@ class GripperTestNode(Node):
     def _get_reg(self, addr):
         """Read a U16 register. Returns int or None on error."""
         req = GetHoldRegs.Request()
-        req.index    = MODBUS_INDEX
+        req.index    = self._modbus_index
         req.addr     = addr
         req.count    = 1
         req.val_type = 'U16'
@@ -225,12 +227,16 @@ class GripperTestNode(Node):
         return passed
 
     def test_modbus_create(self):
-        """Test 3: ModbusCreate — verify res==0."""
-        # Close any existing connection first
-        req_close = ModbusClose.Request()
-        req_close.index = 0
-        self._call_service(self._close_modbus_cli, req_close, timeout=3.0)
-        time.sleep(INTER_CMD_DELAY)
+        """Test 3: ModbusCreate — close ALL indices 0-4 first, then create. Verify res==0."""
+        # Close all possible stale connections (res=-1 on non-existent index is safe)
+        self.get_logger().info('[test_modbus_create] Cerrando conexiones Modbus previas (0-4)...')
+        for idx in range(5):
+            req_close = ModbusClose.Request()
+            req_close.index = idx
+            resp_close = self._call_service(self._close_modbus_cli, req_close, timeout=3.0)
+            if resp_close is not None and resp_close.res == 0:
+                self.get_logger().info(f'  ModbusClose({idx}) OK')
+            time.sleep(INTER_CMD_DELAY)
 
         req = ModbusCreate.Request()
         req.ip       = MODBUS_IP
@@ -239,7 +245,14 @@ class GripperTestNode(Node):
         req.is_rtu   = MODBUS_IS_RTU
         resp = self._call_service(self._create_cli, req, timeout=5.0)
         passed = resp is not None and resp.res == 0
-        detail = f'res={getattr(resp, "res", None)}'
+        # Log robot_return (expected empty — C++ driver uses callRosService, not callRosService_f)
+        rr = getattr(resp, 'robot_return', 'N/A') if resp is not None else 'N/A'
+        self.get_logger().info(f'[test_modbus_create] robot_return="{rr}" (expected empty)')
+        if passed:
+            # After closing all 0-4 and creating fresh, guaranteed index is 0
+            self._modbus_index = 0
+            self.get_logger().info(f'[test_modbus_create] Modbus index set to {self._modbus_index}')
+        detail = f'res={getattr(resp, "res", None)} is_rtu={MODBUS_IS_RTU}'
         self._record('test_modbus_create', passed, detail)
         return passed
 
@@ -371,7 +384,7 @@ class GripperTestNode(Node):
     def test_modbus_close(self):
         """Test 12: ModbusClose(index=0) — verify res==0."""
         req = ModbusClose.Request()
-        req.index = MODBUS_INDEX
+        req.index = self._modbus_index
         resp = self._call_service(self._close_modbus_cli, req, timeout=3.0)
         passed = resp is not None and resp.res == 0
         detail = f'res={getattr(resp, "res", None)}'
