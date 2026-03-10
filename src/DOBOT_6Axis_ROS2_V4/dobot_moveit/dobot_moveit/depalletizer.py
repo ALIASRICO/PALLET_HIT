@@ -101,6 +101,25 @@ class DepalletizerNode(Node):
         self.z_pick_extra      = 0.00
         self.speed_scaling     = 0.2     # más lento para pruebas
         self.place_position    = [0.5, -0.4, 0.15]
+        # Load place_position from collision config if available
+        _collision_cfg = os.path.expanduser('~/dobot_ws/collision_config.json')
+        if os.path.exists(_collision_cfg):
+            try:
+                with open(_collision_cfg, 'r') as _f:
+                    _cc = json.load(_f)
+                _pp = _cc.get('place_position_m')
+                if _pp and len(_pp) == 3:
+                    self.place_position = [float(_pp[0]), float(_pp[1]), float(_pp[2])]
+                    self.get_logger().info(
+                        f'✅ place_position cargado de collision_config: '
+                        f'({self.place_position[0]:.3f}, {self.place_position[1]:.3f}, {self.place_position[2]:.3f})m')
+                else:
+                    self.get_logger().warn('⚠️ collision_config.json sin place_position_m válido — usando default')
+            except Exception as _e:
+                self.get_logger().warn(f'⚠️ Error leyendo collision_config.json: {_e} — usando place_position default')
+        else:
+            self.get_logger().warn(
+                f'⚠️ No existe collision_config.json — place_position default: {self.place_position}')
         self.top_offset_mm     = 20.0
         self.h_max_mm          = 400.0
         self.xy_verify_tol_mm  = 15.0
