@@ -84,6 +84,12 @@ GRIPPER_INIT_TIMEOUT    = 15.0
 GRIPPER_INTER_CMD_DELAY = 0.01
 
 
+# Juice type constants (match dobot_camera.juice_logic)
+JUICE_TYPE_MANGO   = 0.0
+JUICE_TYPE_MORA    = 1.0
+JUICE_TYPE_UNKNOWN = -1.0
+
+
 class DepalletizerNode(Node):
     def __init__(self):
         super().__init__('depalletizer')
@@ -135,6 +141,7 @@ class DepalletizerNode(Node):
         self.is_busy           = False
         self.running           = True
         self.picked_count      = 0
+        self.juice_counts      = {JUICE_TYPE_MANGO: 0, JUICE_TYPE_MORA: 0, JUICE_TYPE_UNKNOWN: 0}
         self.current_joints    = None
         self._last_tcp         = None
 
@@ -236,8 +243,8 @@ class DepalletizerNode(Node):
         data = msg.data
         with self.detection_lock:
             self.detections.clear()
-            for i in range(0, len(data), 7):
-                if i + 6 >= len(data):
+            for i in range(0, len(data), 8):
+                if i + 7 >= len(data):
                     continue
                 det_id   = int(data[i])
                 cam_x_mm = float(data[i+1])
@@ -246,6 +253,7 @@ class DepalletizerNode(Node):
                 conf     = float(data[i+4])
                 det = {'id': det_id, 'confidence': conf,
                        'cam_x_mm': cam_x_mm, 'cam_y_mm': cam_y_mm, 'cam_z_mm': cam_z_mm}
+                det['juice_type'] = float(data[i+7])
                 if self.M_xy is not None:
                     rx_mm, ry_mm = self.camxy_to_robotxy_mm(cam_x_mm, cam_y_mm)
                     z_grasp_mm, h_mm, z_surf_robot_mm, z_surf_cam_mm = \
@@ -621,7 +629,18 @@ class DepalletizerNode(Node):
             if not self.detections:
                 self.get_logger().warn('⚠️ Sin detecciones')
                 return False
-            target = self.detections[0].copy()
+            # Sort: ascending cam_z_mm (top of stack first), then closest to robot
+            Z_LAYER_TOL_MM = 15.0
+            sorted_dets = sorted(self.detections, key=lambda d: d.get('cam_z_mm', 9999.0))
+            best = sorted_dets[0]
+            best_z = best.get('cam_z_mm', 0.0)
+            same_layer = [d for d in sorted_dets
+                          if abs(d.get('cam_z_mm', 0.0) - best_z) <= Z_LAYER_TOL_MM]
+            if len(same_layer) > 1:
+                same_layer.sort(key=lambda d: math.sqrt(
+                    (d.get('robot_x', 0.0) * 1000) ** 2 +
+                    (d.get('robot_y', 0.0) * 1000) ** 2))
+            target = same_layer[0].copy()
 
         if target.get('robot_z_grasp') is None:
             self.get_logger().error('❌ Z de agarre no calculada')
@@ -634,8 +653,11 @@ class DepalletizerNode(Node):
             z_grasp = target['robot_z_grasp'] + self.z_pick_extra
 
             self.get_logger().info('─' * 50)
+            _juice_name = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
+                           JUICE_TYPE_UNKNOWN: 'DESCONOCIDO'}.get(
+                               target.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
             self.get_logger().info(
-                f"🎯 Target #{target['id']} | "
+                f"🎯 Target #{target['id']} [{_juice_name}] | "
                 f"XY=({x*1000:.0f},{y*1000:.0f})mm | "
                 f"h={target.get('h_obj_mm',0):.1f}mm | "
                 f"z_grasp={z_grasp:.3f}m")
@@ -676,7 +698,12 @@ class DepalletizerNode(Node):
                 return False
 
             self.picked_count += 1
-            self.get_logger().info(f'🎉 Ciclo completado. Total: {self.picked_count}')
+            _jt = target.get('juice_type', JUICE_TYPE_UNKNOWN)
+            self.juice_counts[_jt] = self.juice_counts.get(_jt, 0) + 1
+            _jname = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
+                      JUICE_TYPE_UNKNOWN: 'DESCONOCIDO'}.get(_jt, '???')
+            self.get_logger().info(
+                f'🎉 Ciclo completado. Total: {self.picked_count} | 🧃 Tipo: {_jname}')
 
         except Exception as e:
             self.get_logger().error(f'❌ Excepción: {e}')
@@ -725,8 +752,10 @@ class DepalletizerNode(Node):
             print(f'\n    Detecciones: {len(self.detections)}')
             for d in self.detections:
                 if 'robot_x' in d:
-                    print(
-                        f"    🧃 #{d['id']} conf={d['confidence']:.2f} | "
+                    _jn = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
+                       JUICE_TYPE_UNKNOWN: '???'}.get(d.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
+                print(
+                        f"    🧃 #{d['id']} [{_jn}] conf={d['confidence']:.2f} | "
                         f"R=({d['robot_x']*1000:.0f},{d['robot_y']*1000:.0f})mm | "
                         f"h={d.get('h_obj_mm',0):.1f}mm | "
                         f"z_grasp={d.get('robot_z_grasp',0):.3f}m")
@@ -734,6 +763,15 @@ class DepalletizerNode(Node):
 
     def destroy_node(self):
         """Override para limpieza del gripper al cerrar el nodo."""
+        # ── Informe de jugos recogidos ─────────────────────────
+        self.get_logger().info('=' * 50)
+        self.get_logger().info('  📊 INFORME DE JUGOS RECOGIDOS')
+        self.get_logger().info('=' * 50)
+        self.get_logger().info(f'  🥭 MANGO:      {self.juice_counts.get(JUICE_TYPE_MANGO, 0)}')
+        self.get_logger().info(f'  🫐 MORA:        {self.juice_counts.get(JUICE_TYPE_MORA, 0)}')
+        self.get_logger().info(f'  ❓ DESCONOCIDO: {self.juice_counts.get(JUICE_TYPE_UNKNOWN, 0)}')
+        self.get_logger().info(f'  📦 TOTAL:       {self.picked_count}')
+        self.get_logger().info('=' * 50)
         self.gripper_destroy()
         super().destroy_node()
 
