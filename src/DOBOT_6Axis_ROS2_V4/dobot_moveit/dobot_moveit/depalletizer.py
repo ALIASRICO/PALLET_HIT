@@ -49,20 +49,17 @@ def rpy_to_quaternion(roll_deg, pitch_deg, yaw_deg):
 
 
 # ── Orientación fija del TCP ──────────────────────────────────────────────────
-# Tomada directamente de ToolVectorActual cuando el robot apunta abajo.
-# rx=177°, ry=-0.38°, rz=0.53°  → ventosa hacia abajo, yaw fijo
 TCP_FIXED_QUAT = rpy_to_quaternion(177.0, -0.38, 0.53)
 
-# Tolerancias muy estrechas — orientación prácticamente fija
-ORI_TOL_ROLL  = 0.05   # rad ≈ 3°
-ORI_TOL_PITCH = 0.05   # rad ≈ 3°
-ORI_TOL_YAW   = 0.05   # rad ≈ 3°  ← yaw también fijo
+ORI_TOL_ROLL  = 0.05
+ORI_TOL_PITCH = 0.05
+ORI_TOL_YAW   = 0.05
 
 # ── AG-95 Gripper Configuration ───────────────────────────
 GRIPPER_MODBUS_IP       = "192.168.5.1"
 GRIPPER_MODBUS_PORT     = 60000
 GRIPPER_MODBUS_SLAVE_ID = 1
-GRIPPER_MODBUS_IS_RTU   = 1
+GRIPPER_MODBUS_IS_RTU   = 0
 GRIPPER_MODBUS_INDEX    = 0
 
 GRIPPER_REG_INIT        = 256
@@ -83,8 +80,6 @@ GRIPPER_POLL_INTERVAL   = 0.1
 GRIPPER_INIT_TIMEOUT    = 15.0
 GRIPPER_INTER_CMD_DELAY = 0.01
 
-
-# Juice type constants (match dobot_camera.juice_logic)
 JUICE_TYPE_MANGO   = 0.0
 JUICE_TYPE_MORA    = 1.0
 JUICE_TYPE_UNKNOWN = -1.0
@@ -102,12 +97,12 @@ class DepalletizerNode(Node):
 
         # ── Config ───────────────────────────────────────────
         self.calibration_file  = os.path.expanduser('~/dobot_ws/calibration_config.json')
-        self.z_approach        = 0.15    # m sobre z_grasp
-        self.z_lift            = 0.20    # m para levantar
+        self.z_approach        = 0.15
+        self.z_lift            = 0.20
         self.z_pick_extra      = 0.00
-        self.speed_scaling     = 0.2     # más lento para pruebas
+        self.speed_scaling     = 0.2
         self.place_position    = [0.5, -0.4, 0.15]
-        # Load place_position from collision config if available
+
         _collision_cfg = os.path.expanduser('~/dobot_ws/collision_config.json')
         if os.path.exists(_collision_cfg):
             try:
@@ -126,6 +121,7 @@ class DepalletizerNode(Node):
         else:
             self.get_logger().warn(
                 f'⚠️ No existe collision_config.json — place_position default: {self.place_position}')
+
         self.top_offset_mm     = 20.0
         self.h_max_mm          = 400.0
         self.xy_verify_tol_mm  = 15.0
@@ -179,16 +175,22 @@ class DepalletizerNode(Node):
 
         # ── AG-95 Gripper Service Clients ─────────────────────────
         self.gripper_initialized = False
+        self._gripper_modbus_index = GRIPPER_MODBUS_INDEX  # assigned dynamically in gripper_init
         _ns = '/dobot_bringup_ros2/srv'
-        self._gripper_enable_cli = self.create_client(EnableRobot,  f'{_ns}/EnableRobot',  callback_group=self.cb_group)
-        self._gripper_power_cli  = self.create_client(SetToolPower, f'{_ns}/SetToolPower', callback_group=self.cb_group)
-        self._gripper_create_cli = self.create_client(ModbusCreate, f'{_ns}/ModbusCreate', callback_group=self.cb_group)
-        self._gripper_set_cli    = self.create_client(SetHoldRegs,  f'{_ns}/SetHoldRegs',  callback_group=self.cb_group)
-        self._gripper_get_cli    = self.create_client(GetHoldRegs,  f'{_ns}/GetHoldRegs',  callback_group=self.cb_group)
-        self._gripper_close_modbus_cli = self.create_client(ModbusClose, f'{_ns}/ModbusClose', callback_group=self.cb_group)
-        self.get_logger().info('🤏 Inicializando gripper AG-95...')
-        self.gripper_init()
+        self._gripper_enable_cli       = self.create_client(EnableRobot,  f'{_ns}/EnableRobot',  callback_group=self.cb_group)
+        self._gripper_power_cli        = self.create_client(SetToolPower, f'{_ns}/SetToolPower', callback_group=self.cb_group)
+        self._gripper_create_cli       = self.create_client(ModbusCreate, f'{_ns}/ModbusCreate', callback_group=self.cb_group)
+        self._gripper_set_cli          = self.create_client(SetHoldRegs,  f'{_ns}/SetHoldRegs',  callback_group=self.cb_group)
+        self._gripper_get_cli          = self.create_client(GetHoldRegs,  f'{_ns}/GetHoldRegs',  callback_group=self.cb_group)
+        self._gripper_close_modbus_cli = self.create_client(ModbusClose,  f'{_ns}/ModbusClose',  callback_group=self.cb_group)
 
+        # ── Inicialización diferida del gripper ───────────────
+        # Se dispara 2s después de que el executor ya está haciendo spin,
+        # garantizando que las respuestas de servicios se procesen correctamente.
+        self.get_logger().info('🤏 Gripper AG-95: inicialización diferida 2s...')
+        self._gripper_init_timer = self.create_timer(2.0, self._deferred_gripper_init)
+
+        # ── UI thread ────────────────────────────────────────
         self.ui_thread = threading.Thread(target=self.user_interface)
         self.ui_thread.daemon = True
         self.ui_thread.start()
@@ -258,10 +260,10 @@ class DepalletizerNode(Node):
                     rx_mm, ry_mm = self.camxy_to_robotxy_mm(cam_x_mm, cam_y_mm)
                     z_grasp_mm, h_mm, z_surf_robot_mm, z_surf_cam_mm = \
                         self.compute_grasp_z_robot_mm(cam_x_mm, cam_y_mm, cam_z_mm, rx_mm, ry_mm)
-                    det['robot_x']         = rx_mm / 1000.0
-                    det['robot_y']         = ry_mm / 1000.0
-                    det['robot_z_grasp']   = (z_grasp_mm / 1000.0) if z_grasp_mm is not None else None
-                    det['h_obj_mm']        = h_mm
+                    det['robot_x']       = rx_mm / 1000.0
+                    det['robot_y']       = ry_mm / 1000.0
+                    det['robot_z_grasp'] = (z_grasp_mm / 1000.0) if z_grasp_mm is not None else None
+                    det['h_obj_mm']      = h_mm
                 self.detections.append(det)
 
     def joint_states_callback(self, msg):
@@ -275,16 +277,16 @@ class DepalletizerNode(Node):
     # Gripper AG-95 — Control real vía Modbus RTU/TCP
     # ─────────────────────────────────────────────────────────
     def _call_gripper_service(self, client, request, timeout=3.0):
-        """Helper: llama un servicio ROS2 con loop de timeout manual.
-        Retorna el objeto de respuesta o None en fallo/timeout."""
+        """Helper: llama un servicio ROS2. El MultiThreadedExecutor procesa
+        la respuesta en background; usamos Event para esperar sin bloquear."""
         if not client.service_is_ready():
-            self.get_logger().error(f'⚠️ Servicio no disponible: {client.srv_name}')
-            return None
+            if not client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().error(f'⚠️ Servicio no disponible: {client.srv_name}')
+                return None
         future = client.call_async(request)
-        t0 = time.time()
-        while rclpy.ok() and not future.done() and (time.time() - t0) < timeout:
-            time.sleep(0.01)
-        if not future.done():
+        event = threading.Event()
+        future.add_done_callback(lambda f: event.set())
+        if not event.wait(timeout=timeout):
             self.get_logger().error(f'❌ Timeout servicio {client.srv_name}')
             return None
         if future.exception() is not None:
@@ -298,12 +300,11 @@ class DepalletizerNode(Node):
         return resp
 
     def _set_hold_reg(self, addr, value):
-        """Escribe un registro U16. val_tab DEBE tener llaves: '{valor}'."""
         req = SetHoldRegs.Request()
-        req.index    = GRIPPER_MODBUS_INDEX
+        req.index    = self._gripper_modbus_index
         req.addr     = addr
         req.count    = 1
-        req.val_tab  = '{' + str(value) + '}'  # e.g. "{165}" — crítico: con llaves
+        req.val_tab  = '{' + str(value) + '}'
         req.val_type = 'U16'
         resp = self._call_gripper_service(self._gripper_set_cli, req)
         time.sleep(GRIPPER_INTER_CMD_DELAY)
@@ -314,9 +315,8 @@ class DepalletizerNode(Node):
         return True
 
     def _get_hold_reg(self, addr):
-        """Lee un registro U16. Retorna entero o None en error."""
         req = GetHoldRegs.Request()
-        req.index    = GRIPPER_MODBUS_INDEX
+        req.index    = self._gripper_modbus_index
         req.addr     = addr
         req.count    = 1
         req.val_type = 'U16'
@@ -335,32 +335,55 @@ class DepalletizerNode(Node):
             self.get_logger().error(f'❌ Error parseando robot_return="{raw}": {e}')
             return None
 
+    def _deferred_gripper_init(self):
+        """Timer de un disparo — se llama 2s después del spin, cuando el
+        executor ya está activo y puede procesar respuestas de servicios."""
+        self._gripper_init_timer.cancel()
+        self.get_logger().info('🤏 Inicializando gripper AG-95...')
+        self.gripper_init()
+
     def gripper_init(self):
+        """Inicialización AG-95 con un reintento automático si el primer intento falla."""
+        if not self._gripper_init_attempt():
+            self.get_logger().warn('⚠️ [Gripper] Primer intento falló — reintentando en 3s...')
+            time.sleep(3.0)
+            return self._gripper_init_attempt()
+        return True
+
+    def _gripper_init_attempt(self):
         """Secuencia completa de inicialización AG-95:
-        EnableRobot → SetToolPower(1) → ModbusClose(0) → ModbusCreate → init(165) → poll reg512 → force/speed"""
+        EnableRobot → SetToolPower(1) → ModbusClose(0-4) → ModbusCreate → verify → init(165) → poll reg512 → force/speed"""
         self.get_logger().info('🤏 [Gripper] Iniciando secuencia de inicialización...')
 
         # 1. EnableRobot
-        resp = self._call_gripper_service(self._gripper_enable_cli, EnableRobot.Request(), timeout=5.0)
+        resp = self._call_gripper_service(self._gripper_enable_cli, EnableRobot.Request(), timeout=15.0)
         if resp is None or resp.res != 0:
             self.get_logger().warn(f'⚠️ [Gripper] EnableRobot res={getattr(resp,"res",None)} — continuando')
         else:
             self.get_logger().info('   ✅ EnableRobot OK')
+        # Esperar que el gripper arranque tras recibir alimentación
+        self.get_logger().info('   ⏳ Esperando arranque del gripper (3s)...')
+        time.sleep(3.0)
 
         # 2. SetToolPower(1)
         req = SetToolPower.Request()
         req.status = 1
-        resp = self._call_gripper_service(self._gripper_power_cli, req, timeout=5.0)
+        resp = self._call_gripper_service(self._gripper_power_cli, req, timeout=15.0)
         if resp is None or resp.res != 0:
             self.get_logger().warn(f'⚠️ [Gripper] SetToolPower(1) res={getattr(resp,"res",None)}')
         else:
             self.get_logger().info('   ✅ SetToolPower(1) OK')
 
-        # 3. ModbusClose(0) — liberar slot previo si existe
-        req_close = ModbusClose.Request()
-        req_close.index = 0
-        self._call_gripper_service(self._gripper_close_modbus_cli, req_close, timeout=3.0)
-        time.sleep(GRIPPER_INTER_CMD_DELAY)
+        # 3. ModbusClose(0-4) — liberar TODOS los slots previos
+        self.get_logger().info('   🔄 Cerrando todas las conexiones Modbus previas (0-4)...')
+        for idx in range(5):
+            req_close = ModbusClose.Request()
+            req_close.index = idx
+            resp_close = self._call_gripper_service(self._gripper_close_modbus_cli, req_close, timeout=3.0)
+            if resp_close is not None and resp_close.res == 0:
+                self.get_logger().info(f'      ModbusClose({idx}) OK')
+            # res=-1 en índice inexistente es seguro — ignorar
+            time.sleep(GRIPPER_INTER_CMD_DELAY)
 
         # 4. ModbusCreate
         req = ModbusCreate.Request()
@@ -368,12 +391,25 @@ class DepalletizerNode(Node):
         req.port     = GRIPPER_MODBUS_PORT
         req.slave_id = GRIPPER_MODBUS_SLAVE_ID
         req.is_rtu   = GRIPPER_MODBUS_IS_RTU
-        resp = self._call_gripper_service(self._gripper_create_cli, req, timeout=5.0)
+        resp = self._call_gripper_service(self._gripper_create_cli, req, timeout=15.0)
         if resp is None or resp.res != 0:
             self.get_logger().error(f'❌ [Gripper] ModbusCreate FALLÓ (res={getattr(resp,"res",None)})')
             self.gripper_initialized = False
             return False
-        self.get_logger().info('   ✅ ModbusCreate OK (index=0 asumido)')
+        # Tras cerrar todos los índices, el nuevo índice asignado es siempre 0
+        self._gripper_modbus_index = 0
+        self.get_logger().info(f'   ✅ ModbusCreate OK (index={self._gripper_modbus_index})')
+        # Esperar que la conexión Modbus TCP se establezca completamente
+        self.get_logger().info('   ⏳ Esperando estabilización Modbus (2s)...')
+        time.sleep(2.0)
+
+        # 4b. Verificar conectividad Modbus con lectura de prueba
+        test_val = self._get_hold_reg(GRIPPER_REG_INIT_STATUS)
+        if test_val is None:
+            self.get_logger().error('❌ [Gripper] Verificación de conectividad Modbus fallida')
+            self.gripper_initialized = False
+            return False
+        self.get_logger().info(f'   ✅ Modbus conectividad verificada (reg 512 = {test_val})')
 
         # 5. Escribir init 165 en reg 256
         if not self._set_hold_reg(GRIPPER_REG_INIT, GRIPPER_INIT_VALUE):
@@ -382,7 +418,7 @@ class DepalletizerNode(Node):
             return False
         self.get_logger().info('   ✅ Init reg 256=165 escrito')
 
-        # 6. Poll reg 512 hasta == 1 (gripper calibrado y listo)
+        # 6. Poll reg 512 hasta == 1
         self.get_logger().info('   ⏳ Esperando calibración AG-95 (reg 512 == 1)...')
         t0 = time.time()
         ready = False
@@ -411,8 +447,6 @@ class DepalletizerNode(Node):
         return True
 
     def gripper_open(self):
-        """Abre el gripper a posición 1000 (totalmente abierto).
-        Espera reg 513 != 0. Retorna True en éxito."""
         if not self.gripper_initialized:
             self.get_logger().warn('⚠️ [Gripper] No inicializado — omitiendo apertura')
             return False
@@ -431,8 +465,6 @@ class DepalletizerNode(Node):
         return False
 
     def _gripper_close_to(self, position):
-        """Cierra el gripper a una posición específica.
-        Retorna el valor de reg 513 cuando deja de moverse, o None en error/timeout."""
         if not self._set_hold_reg(GRIPPER_REG_POSITION, position):
             return None
         t0 = time.time()
@@ -448,8 +480,6 @@ class DepalletizerNode(Node):
         return None
 
     def gripper_verify_grasp(self):
-        """Cierre progresivo con reintentos: 500 → 300 → 100.
-        Retorna True si reg 513 == 2 (objeto detectado). False si todos fallan."""
         if not self.gripper_initialized:
             self.get_logger().warn('⚠️ [Gripper] No inicializado — omitiendo agarre')
             return False
@@ -467,13 +497,12 @@ class DepalletizerNode(Node):
                     self.get_logger().warn(f'   ⚠️ Timeout/error en pos={pos}')
                 else:
                     self.get_logger().warn(f'   ⚠️ Estado inesperado {status} en pos={pos}')
-                self.gripper_open()  # re-abrir antes del siguiente intento
+                self.gripper_open()
         self.get_logger().error('❌ Agarre fallido tras todos los reintentos (500→300→100)')
         self.gripper_open()
         return False
 
     def gripper_destroy(self):
-        """Limpieza en shutdown: abrir gripper y cerrar Modbus."""
         if self.gripper_initialized:
             self.get_logger().info('🤏 [Gripper] Apagando — abriendo gripper...')
             try:
@@ -483,7 +512,7 @@ class DepalletizerNode(Node):
         self.get_logger().info('🤏 [Gripper] Cerrando conexión Modbus...')
         try:
             req = ModbusClose.Request()
-            req.index = GRIPPER_MODBUS_INDEX
+            req.index = self._gripper_modbus_index
             resp = self._call_gripper_service(
                 self._gripper_close_modbus_cli, req, timeout=3.0)
             self.get_logger().info(f'   ModbusClose res={getattr(resp,"res",None)}')
@@ -492,7 +521,6 @@ class DepalletizerNode(Node):
 
     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
-    # Bloquea hasta que el movimiento termina completamente
     # ─────────────────────────────────────────────────────────
     def move_to_pose(self, x, y, z, label=''):
         tag = f'[{label}] ' if label else ''
@@ -500,14 +528,13 @@ class DepalletizerNode(Node):
 
         goal = MoveGroup.Goal()
         goal.request.group_name                      = self.planning_group
-        goal.request.num_planning_attempts           = 20      # más intentos
-        goal.request.allowed_planning_time           = 10.0    # más tiempo
+        goal.request.num_planning_attempts           = 20
+        goal.request.allowed_planning_time           = 10.0
         goal.request.max_velocity_scaling_factor     = self.speed_scaling
         goal.request.max_acceleration_scaling_factor = self.speed_scaling
 
         constraints = Constraints()
 
-        # ── Posición ─────────────────────────────────────────
         pc = PositionConstraint()
         pc.header.frame_id = 'base_link'
         pc.link_name       = self.end_effector_link
@@ -524,15 +551,13 @@ class DepalletizerNode(Node):
         pc.weight = 1.0
         constraints.position_constraints.append(pc)
 
-        # ── Orientación completamente fija ───────────────────
-        # roll=177°, pitch=-0.38°, yaw=0.53° — ventosa siempre abajo
         oc = OrientationConstraint()
-        oc.header.frame_id       = 'base_link'
-        oc.link_name             = self.end_effector_link
-        oc.orientation.x         = TCP_FIXED_QUAT['x']
-        oc.orientation.y         = TCP_FIXED_QUAT['y']
-        oc.orientation.z         = TCP_FIXED_QUAT['z']
-        oc.orientation.w         = TCP_FIXED_QUAT['w']
+        oc.header.frame_id           = 'base_link'
+        oc.link_name                 = self.end_effector_link
+        oc.orientation.x             = TCP_FIXED_QUAT['x']
+        oc.orientation.y             = TCP_FIXED_QUAT['y']
+        oc.orientation.z             = TCP_FIXED_QUAT['z']
+        oc.orientation.w             = TCP_FIXED_QUAT['w']
         oc.absolute_x_axis_tolerance = ORI_TOL_ROLL
         oc.absolute_y_axis_tolerance = ORI_TOL_PITCH
         oc.absolute_z_axis_tolerance = ORI_TOL_YAW
@@ -541,7 +566,6 @@ class DepalletizerNode(Node):
 
         goal.request.goal_constraints.append(constraints)
 
-        # ── Enviar y ESPERAR completo ─────────────────────────
         self.get_logger().info(f'   ⏳ Planeando...')
         future = self.move_group_client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
@@ -575,7 +599,6 @@ class DepalletizerNode(Node):
                 self.get_logger().info('   ✅ Movimiento completado')
             return True
 
-        # Decodificar código de error para diagnóstico
         error_names = {
             -1:  'FAILURE',
             -2:  'PLANNING_FAILED (IK no encontrada)',
@@ -629,7 +652,6 @@ class DepalletizerNode(Node):
             if not self.detections:
                 self.get_logger().warn('⚠️ Sin detecciones')
                 return False
-            # Sort: ascending cam_z_mm (top of stack first), then closest to robot
             Z_LAYER_TOL_MM = 15.0
             sorted_dets = sorted(self.detections, key=lambda d: d.get('cam_z_mm', 9999.0))
             best = sorted_dets[0]
@@ -663,15 +685,13 @@ class DepalletizerNode(Node):
                 f"z_grasp={z_grasp:.3f}m")
             self.get_logger().info('─' * 50)
 
-            # PICK ────────────────────────────────────────────
+            # PICK
             self.gripper_open()
 
             if not self.move_to_pose(x, y, z_grasp + self.z_approach, label='APPROACH'):
                 return False
-
             if not self.verify_xy(x, y):
                 return False
-
             if not self.move_to_pose(x, y, z_grasp, label='DESCENSO'):
                 return False
 
@@ -683,12 +703,11 @@ class DepalletizerNode(Node):
             if not self.move_to_pose(x, y, z_grasp + self.z_lift, label='LIFT'):
                 return False
 
-            # PLACE ───────────────────────────────────────────
+            # PLACE
             px, py, pz = self.place_position
 
             if not self.move_to_pose(px, py, pz + 0.1, label='PLACE APPROACH'):
                 return False
-
             if not self.move_to_pose(px, py, pz, label='PLACE'):
                 return False
 
@@ -753,17 +772,14 @@ class DepalletizerNode(Node):
             for d in self.detections:
                 if 'robot_x' in d:
                     _jn = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
-                       JUICE_TYPE_UNKNOWN: '???'}.get(d.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
-                print(
+                           JUICE_TYPE_UNKNOWN: '???'}.get(d.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
+                    print(
                         f"    🧃 #{d['id']} [{_jn}] conf={d['confidence']:.2f} | "
                         f"R=({d['robot_x']*1000:.0f},{d['robot_y']*1000:.0f})mm | "
                         f"h={d.get('h_obj_mm',0):.1f}mm | "
                         f"z_grasp={d.get('robot_z_grasp',0):.3f}m")
 
-
     def destroy_node(self):
-        """Override para limpieza del gripper al cerrar el nodo."""
-        # ── Informe de jugos recogidos ─────────────────────────
         self.get_logger().info('=' * 50)
         self.get_logger().info('  📊 INFORME DE JUGOS RECOGIDOS')
         self.get_logger().info('=' * 50)
