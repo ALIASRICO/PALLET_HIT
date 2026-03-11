@@ -233,9 +233,21 @@ class DepalletizerNode(Node):
     def joint_states_callback(self, msg):
         if len(msg.position) >= 6:
             self.current_joints = list(msg.position[:6])
+            # DEBUG: Log para validar sincronización de joint states
+            self.get_logger().debug(
+                f'🔍 JS callback: joints={["{:.2f}".format(j) for j in msg.position[:6]]}')
 
     def _tcp_callback(self, msg):
+        old_tcp = self._last_tcp
         self._last_tcp = {'x': msg.x, 'y': msg.y, 'z': msg.z}
+        # DEBUG: Log para validar frame del TCP
+        if old_tcp is not None:
+            dx = msg.x - old_tcp['x']
+            dy = msg.y - old_tcp['y']
+            dz = msg.z - old_tcp['z']
+            self.get_logger().debug(
+                f'🔍 TCP update: ({msg.x:.1f}, {msg.y:.1f}, {msg.z:.1f})mm '
+                f'| delta=({dx:.1f}, {dy:.1f}, {dz:.1f})mm')
 
     # ─────────────────────────────────────────────────────────
     # Pre-flight: validación de joint states
@@ -287,6 +299,13 @@ class DepalletizerNode(Node):
         tag = f'[{label}] ' if label else ''
         self.get_logger().info(f'📍 {tag}Moviendo a: ({x:.3f}, {y:.3f}, {z:.3f})m')
 
+        # DEBUG: Log del estado actual antes de planificar
+        if self.current_joints is not None:
+            joints_str = ', '.join(f'{j:.3f}' for j in self.current_joints)
+            self.get_logger().debug(f'🔍 START_STATE准备: joints=[{joints_str}]')
+        else:
+            self.get_logger().warn('⚠️ DEBUG: current_joints es None antes de planificar!')
+
         goal = MoveGroup.Goal()
         goal.request.group_name                      = self.planning_group
         goal.request.num_planning_attempts           = 20
@@ -326,8 +345,9 @@ class DepalletizerNode(Node):
         constraints.orientation_constraints.append(oc)
 
         goal.request.goal_constraints.append(constraints)
-
+        time.sleep(0.5)
         self.get_logger().info(f'   ⏳ Planeando...')
+
         future = self.move_group_client.send_goal_async(goal)
         _accept_event = threading.Event()
         future.add_done_callback(lambda f: _accept_event.set())
@@ -472,11 +492,15 @@ class DepalletizerNode(Node):
         if self._last_tcp is None:
             self.get_logger().warn('⚠️ Sin lectura TCP, omitiendo verificación')
             return True
-        err_x = abs(self._last_tcp['x'] - target_x_m * 1000.0)
-        err_y = abs(self._last_tcp['y'] - target_y_m * 1000.0)
+        # DEBUG: Ver qué valores se comparan
+        target_x_mm = target_x_m * 1000.0
+        target_y_mm = target_y_m * 1000.0
+        err_x = abs(self._last_tcp['x'] - target_x_mm)
+        err_y = abs(self._last_tcp['y'] - target_y_mm)
         self.get_logger().info(
-            f'   📐 Error XY → dx={err_x:.1f}mm  dy={err_y:.1f}mm  '
-            f'(tol={self.xy_verify_tol_mm}mm)')
+            f'   📐 Error XY → target=({target_x_mm:.1f},{target_y_mm:.1f})mm '
+            f'actual=({self._last_tcp["x"]:.1f},{self._last_tcp["y"]:.1f})mm '
+            f'dx={err_x:.1f}mm dy={err_y:.1f}mm (tol={self.xy_verify_tol_mm}mm)')
         if err_x > self.xy_verify_tol_mm or err_y > self.xy_verify_tol_mm:
             self.get_logger().error('❌ Error XY fuera de tolerancia — abortando')
             return False

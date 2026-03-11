@@ -1,0 +1,9 @@
+=== SYNTAX VERIFICATION ===
+
+depalletizer.py:
+python3 -m py_compile /home/iudc/dobot_ws/src/DOBOT_6Axis_ROS2_V4/dobot_moveit/dobot_moveit/depalletizer.py
+Result: OK (exit 0)
+
+test_gripper_modbus.py:
+python3 -m py_compile /home/iudc/dobot_ws/src/DOBOT_6Axis_ROS2_V4/dobot_moveit/scripts/test_gripper_modbus.py
+Result: OK (exit 0)

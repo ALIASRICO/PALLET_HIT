@@ -5,10 +5,10 @@
   <version>0.0.0</version>
   <description>
     MoveIt action server and joint state publisher for Dobot CR20 robot.
-    Compatible with ROS2 Jazzy and Isaac Sim 5.1.0.
+    Compatible with ROS2 Humble and Isaac Sim.
   </description>
-  <maintainer email="futingxing@dobot-robot.com">FTX</maintainer>
-  <license>BSD</license>
+  <maintainer email="iudc@example.com">IUDC</maintainer>
+  <license>MIT</license>
 
   <!-- Build tools -->
   <buildtool_depend>ament_python</buildtool_depend>
@@ -21,8 +21,12 @@
   <depend>control_msgs</depend>
   <depend>moveit_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
 
-  <!-- Isaac Sim support (NEW) -->
+  <!-- MoveIt2 Python -->
+  <depend>moveit_ros_planning_interface</depend>
+  
+  <!-- Isaac Sim support -->
   <exec_depend>ros_ign_bridge</exec_depend>
 
   <!-- Custom packages -->

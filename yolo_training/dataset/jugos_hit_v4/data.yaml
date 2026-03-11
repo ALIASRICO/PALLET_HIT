@@ -1,0 +1,9 @@
+path: /home/iudc/dobot_ws/yolo_training/dataset/jugos_hit_v4
+train: train/images
+val: train/images
+test: train/images
+
+names:
+  0: HIT-MANGO
+  1: HIT-MORA
+  2: cara_F

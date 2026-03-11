@@ -18,6 +18,11 @@ class PublisherNode(Node):
         self.pub2 = self.create_publisher(JointState, "joint_states", 10)
 
     def listener_callback(self, msg):
+        # Validar que el mensaje tenga suficientes posiciones
+        if len(msg.position) < 6:
+            self.get_logger().warn(f'Received only {len(msg.position)} positions, expected at least 6. Skipping...')
+            return
+        
         joint = msg.position[0:6]
         print(joint)
         msg2 = JointState()

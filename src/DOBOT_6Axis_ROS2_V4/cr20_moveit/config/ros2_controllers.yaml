@@ -24,3 +24,12 @@ cr20_group_controller:
     state_interfaces:
       - position
       - velocity
+    # ── Tolerancias para evitar UNABLE_TO_ACQUIRE_SENSOR_DATA ──
+    goal_time: 0.0
+    stopped_velocity_tolerance: 0.05
+    state_publish_rate: 50.0
+    action_monitor_rate: 20.0
+    allow_nonzero_velocity_at_trajectory_end: true
+    constraints:
+      stopped_velocity_tolerance: 0.05
+      goal_time: 0.0

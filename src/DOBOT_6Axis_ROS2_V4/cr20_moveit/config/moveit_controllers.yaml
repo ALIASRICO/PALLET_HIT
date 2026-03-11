@@ -2,12 +2,15 @@ moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControll
 
 moveit_simple_controller_manager:
   controller_names:
-    - joint_trajectory_controller
+    - cr20_group_controller
 
-  joint_trajectory_controller:
-    type: JointGroupPositionController # Cambiado para que sea compatible con el nodo que tienes
-    action_ns: joint_command           # Este es el tópico que creamos en Isaac
-    default: True
+  cr20_group_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    allowed_execution_duration_scaling: 2.0
+    allowed_goal_duration_margin: 10.0
+    allowed_start_tolerance: 0.05
     joints:
       - joint1
       - joint2

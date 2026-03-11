@@ -4,11 +4,10 @@
   <name>cr20_moveit</name>
   <version>0.3.0</version>
   <description>
-     An automatically generated package with all the configuration and launch files 
-     for using the cr20_robot with the MoveIt Motion Planning Framework.
-     Compatible with ROS2 Jazzy and Isaac Sim 5.1.0.
+     An automatically generated package with all the configuration and launch files for using the cr20_robot with the MoveIt Motion Planning Framework
   </description>
   <maintainer email="futingxing@dobot-robots.com">futingxing</maintainer>
+
   <license>BSD</license>
 
   <url type="website">http://moveit.ros.org/</url>
@@ -17,58 +16,35 @@
 
   <author email="futingxing@dobot-robots.com">futingxing</author>
 
-  <!-- Build tools -->
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <buildtool_depend>ament_python</buildtool_depend>
 
-  <!-- MoveIt2 core dependencies -->
   <exec_depend>moveit_ros_move_group</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
   <exec_depend>moveit_planners</exec_depend>
   <exec_depend>moveit_simple_controller_manager</exec_depend>
-  <exec_depend>moveit_configs_utils</exec_depend>
-  <exec_depend>moveit_ros_visualization</exec_depend>
-  <exec_depend>moveit_ros_warehouse</exec_depend>
-  <exec_depend>moveit_setup_assistant</exec_depend>
-
-  <!-- Robot description and state -->
-  <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher_gui</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>xacro</exec_depend>
-
-  <!-- Controller dependencies -->
+  <!-- The next 2 packages are required for the gazebo simulation.
+       We don't include them by default to prevent installing gazebo and all its dependencies. -->
+  <!-- <exec_depend>joint_trajectory_controller</exec_depend> -->
+  <!-- <exec_depend>gazebo_ros_control</exec_depend> -->
   <exec_depend>controller_manager</exec_depend>
-  <exec_depend>ros2_controllers</exec_depend>
-  <exec_depend>joint_trajectory_controller</exec_depend>
-
-  <!-- RViz -->
+  <exec_depend>dobot_rviz</exec_depend>
+  <exec_depend>moveit_configs_utils</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+  <exec_depend>moveit_ros_visualization</exec_depend>
+  <exec_depend>moveit_ros_warehouse</exec_depend>
+  <exec_depend>moveit_setup_assistant</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>rviz_common</exec_depend>
   <exec_depend>rviz_default_plugins</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>warehouse_ros_mongo</exec_depend>
+  <exec_depend>xacro</exec_depend>
 
-  <!-- Gazebo simulation (optional - for Gazebo mode) -->
-  <exec_depend>ros_gz_sim</exec_depend>
-  <exec_depend>ros_gz_bridge</exec_depend>
-  <exec_depend>gz_ros2_control</exec_depend>
-
-  <!-- Isaac Sim support (NEW) -->
-  <exec_depend>ros_ign_bridge</exec_depend>
-  <exec_depend>ros_ign_image</exec_depend>
-  <exec_depend>ros_ign_point_cloud</exec_depend>
-
-  <!-- Custom packages -->
-  <exec_depend>dobot_rviz</exec_depend>
-  <exec_depend>dobot_msgs_v4</exec_depend>
-  <exec_depend>cra_description</exec_depend>
-
-  <!-- Python dependencies for new nodes -->
-  <exec_depend>python3-numpy</exec_depend>
-
-  <!-- Test dependencies -->
-  <test_depend>ament_lint_auto</test_depend>
-  <test_depend>ament_lint_common</test_depend>
 
   <export>
       <build_type>ament_cmake</build_type>
