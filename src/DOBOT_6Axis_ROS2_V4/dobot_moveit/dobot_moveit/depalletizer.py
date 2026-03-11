@@ -154,10 +154,6 @@ class DepalletizerNode(Node):
             DOInstantSrv, 'dobot_bringup_ros2/srv/DOInstant',
             callback_group=self.cb_group)
 
-        # ── Pre-flight: esperar joint states válidos ──────────────
-        if not self._wait_for_valid_joint_states(timeout_sec=15.0):
-            self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
-
         # ── UI thread ────────────────────────────────────────
         self.ui_thread = threading.Thread(target=self.user_interface)
         self.ui_thread.daemon = True
@@ -279,7 +275,12 @@ class DepalletizerNode(Node):
         self.destroy_subscription(sub)
         return False
 
-     # ─────────────────────────────────────────────────────────
+    def run_preflight(self):
+        """Run pre-flight checks. Must be called AFTER executor is spinning."""
+        if not self._wait_for_valid_joint_states(timeout_sec=15.0):
+            self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
+
+    # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
     # ─────────────────────────────────────────────────────────
     def move_to_pose(self, x, y, z, label=''):
@@ -642,11 +643,23 @@ def main(args=None):
         node     = DepalletizerNode()
         executor = MultiThreadedExecutor(num_threads=4)
         executor.add_node(node)
-        executor.spin()
+
+        # Start spinning in background so callbacks fire before preflight
+        spin_thread = threading.Thread(target=executor.spin, daemon=True)
+        spin_thread.start()
+
+        # Now run pre-flight with executor active
+        node.run_preflight()
+
+        # Block until shutdown
+        spin_thread.join()
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass  # Already shut down (e.g. user pressed Q in UI)
 
 
 if __name__ == '__main__':
