@@ -2,7 +2,7 @@
 """
 Despaletizador — modo prueba
 - Orientación TCP completamente fija (ventosa siempre abajo, yaw fijo)
-- AG-95 gripper real vía Modbus RTU/TCP
+- AG-160 gripper real vía Modbus RTU/TCP
 - Bloquea hasta que MoveIt termine cada movimiento
 """
 
@@ -55,7 +55,7 @@ ORI_TOL_ROLL  = 0.05
 ORI_TOL_PITCH = 0.05
 ORI_TOL_YAW   = 0.05
 
-# ── AG-95 Gripper Configuration ───────────────────────────
+# ── AG-160 Gripper Configuration ───────────────────────────
 GRIPPER_MODBUS_IP       = "192.168.5.1"
 GRIPPER_MODBUS_PORT     = 60000
 GRIPPER_MODBUS_SLAVE_ID = 1
@@ -97,7 +97,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('=' * 60)
         self.get_logger().info('   🧃 DESPALETIZADOR — MODO PRUEBA 🧃')
-        self.get_logger().info('   Orientación TCP fija | AG-95 gripper real')
+        self.get_logger().info('   Orientación TCP fija | AG-160 gripper real')
         self.get_logger().info('=' * 60)
 
         # ── Config ───────────────────────────────────────────
@@ -182,7 +182,7 @@ class DepalletizerNode(Node):
         if not self._wait_for_valid_joint_states(timeout_sec=15.0):
             self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
 
-        # ── AG-95 Gripper Service Clients ─────────────────────────
+        # ── AG-160 Gripper Service Clients ─────────────────────────
         self.gripper_initialized = False
         self._gripper_modbus_index = GRIPPER_MODBUS_INDEX  # assigned dynamically in gripper_init
         _ns = '/dobot_bringup_ros2/srv'
@@ -196,7 +196,7 @@ class DepalletizerNode(Node):
         # ── Inicialización diferida del gripper ───────────────
         # Se dispara 2s después de que el executor ya está haciendo spin,
         # garantizando que las respuestas de servicios se procesen correctamente.
-        self.get_logger().info('🤏 Gripper AG-95: inicialización diferida 2s...')
+        self.get_logger().info('🤏 Gripper AG-160: inicialización diferida 2s...')
         self._gripper_init_timer = self.create_timer(2.0, self._deferred_gripper_init)
 
         # ── UI thread ────────────────────────────────────────
@@ -321,7 +321,7 @@ class DepalletizerNode(Node):
         return False
 
     # ─────────────────────────────────────────────────────────
-    # Gripper AG-95 — Control real vía Modbus RTU/TCP
+    # Gripper AG-160 — Control real vía Modbus RTU/TCP
     # ─────────────────────────────────────────────────────────
     def _call_gripper_service(self, client, request, timeout=3.0):
         """Helper: llama un servicio ROS2. El MultiThreadedExecutor procesa
@@ -386,11 +386,11 @@ class DepalletizerNode(Node):
         """Timer de un disparo — se llama 2s después del spin, cuando el
         executor ya está activo y puede procesar respuestas de servicios."""
         self._gripper_init_timer.cancel()
-        self.get_logger().info('🤏 Inicializando gripper AG-95...')
+        self.get_logger().info('🤏 Inicializando gripper AG-160...')
         self.gripper_init()
 
     def gripper_init(self):
-        """Inicialización AG-95 con un reintento automático si el primer intento falla."""
+        """Inicialización AG-160 con un reintento automático si el primer intento falla."""
         if not self._gripper_init_attempt():
             self.get_logger().warn('⚠️ [Gripper] Primer intento falló — reintentando en 3s...')
             time.sleep(3.0)
@@ -398,7 +398,7 @@ class DepalletizerNode(Node):
         return True
 
     def _gripper_init_attempt(self):
-        """Secuencia completa de inicialización AG-95:
+        """Secuencia completa de inicialización AG-160:
         EnableRobot → SetToolPower(1) → ModbusClose(0-4) → ModbusCreate → verify → init(165) → poll reg512 → force/speed"""
         self.get_logger().info('🤏 [Gripper] Iniciando secuencia de inicialización...')
 
@@ -470,13 +470,13 @@ class DepalletizerNode(Node):
         self.get_logger().info('   ✅ Init reg 256=165 escrito')
 
         # 6. Poll reg 512 hasta == 1
-        self.get_logger().info('   ⏳ Esperando calibración AG-95 (reg 512 == 1)...')
+        self.get_logger().info('   ⏳ Esperando calibración AG-160 (reg 512 == 1)...')
         t0 = time.time()
         ready = False
         while time.time() - t0 < GRIPPER_INIT_TIMEOUT:
             val = self._get_hold_reg(GRIPPER_REG_INIT_STATUS)
             if val == 1:
-                self.get_logger().info('   ✅ Gripper AG-95 calibrado (reg 512 == 1)')
+                self.get_logger().info('   ✅ Gripper AG-160 calibrado (reg 512 == 1)')
                 ready = True
                 break
             time.sleep(0.5)
@@ -494,7 +494,7 @@ class DepalletizerNode(Node):
 
         self.gripper_initialized = True
         self.get_logger().info(
-            f'✅ AG-95 gripper inicializado (fuerza={GRIPPER_FORCE}%, velocidad={GRIPPER_SPEED}%)')
+            f'✅ AG-160 gripper inicializado (fuerza={GRIPPER_FORCE}%, velocidad={GRIPPER_SPEED}%)')
         return True
 
     def gripper_open(self):

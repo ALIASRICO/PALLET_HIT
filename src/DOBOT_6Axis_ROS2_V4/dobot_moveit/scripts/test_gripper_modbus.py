@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ⚠️ SAFETY: This script does NOT move the robot arm — gripper operations ONLY
 """
-Standalone AG-95 Gripper Modbus Test Script
+Standalone AG-160 Gripper Modbus Test Script
 Tests each Modbus operation against the physical Dobot CR20.
 
 Usage:
@@ -97,7 +97,7 @@ logger = logging.getLogger('gripper_test')
 
 
 class GripperTestNode(Node):
-    """ROS2 node that exercises every AG-95 Modbus primitive."""
+    """ROS2 node that exercises every AG-160 Modbus primitive."""
 
     def __init__(self):
         super().__init__('gripper_test_node')
@@ -421,7 +421,7 @@ class GripperTestNode(Node):
         """Run all tests or a specific one. Returns (passed, total)."""
         self._results = []
 
-        print(f'\n{CYAN}=== AG-95 Gripper Modbus Test Suite ==={RESET}\n')
+        print(f'\n{CYAN}=== AG-160 Gripper Modbus Test Suite ==={RESET}\n')
 
         # Wait for services
         print(f'{YELLOW}Waiting for dobot_bringup services...{RESET}')
@@ -481,7 +481,7 @@ class GripperTestNode(Node):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Standalone AG-95 Gripper Modbus Test Suite for Dobot CR20')
+        description='Standalone AG-160 Gripper Modbus Test Suite for Dobot CR20')
     parser.add_argument(
         '--test',
         choices=[
