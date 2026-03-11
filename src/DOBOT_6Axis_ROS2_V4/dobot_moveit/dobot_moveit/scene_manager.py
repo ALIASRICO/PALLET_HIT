@@ -8,6 +8,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Pose
 from shape_msgs.msg import SolidPrimitive
 from moveit_msgs.msg import CollisionObject, PlanningScene
+from moveit_msgs.srv import ApplyPlanningScene
 import time
 import json
 import os
@@ -23,10 +24,34 @@ class SceneManager(Node):
         self.get_logger().info('   GESTOR DE ESCENA INDUSTRIAL')
         self.get_logger().info('=' * 50)
 
-        self.scene_pub = self.create_publisher(PlanningScene, '/planning_scene', 10)
-        
-        time.sleep(2.0)
+        # Servicio /apply_planning_scene — garantiza entrega (vs topic que se pierde si move_group no está listo)
+        self.apply_client = self.create_client(ApplyPlanningScene, '/apply_planning_scene')
+        self.get_logger().info('Esperando /apply_planning_scene...')
+        if not self.apply_client.wait_for_service(timeout_sec=30.0):
+            self.get_logger().error('❌ /apply_planning_scene no disponible — usando topic fallback')
+            self.apply_client = None
+            self.scene_pub = self.create_publisher(PlanningScene, '/planning_scene', 10)
+            time.sleep(2.0)
+        else:
+            self.get_logger().info('✅ /apply_planning_scene disponible')
+            self.scene_pub = None
+
         self.load_scene()
+
+    def _apply_scene(self, ps):
+        """Aplica una PlanningScene usando servicio (confiable) o topic (fallback)."""
+        if self.apply_client is not None:
+            req = ApplyPlanningScene.Request()
+            req.scene = ps
+            future = self.apply_client.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+            if future.result() is not None and future.result().success:
+                return True
+            self.get_logger().warn('⚠️ apply_planning_scene falló, reintentando...')
+            return False
+        else:
+            self.scene_pub.publish(ps)
+            return True
 
     def create_box(self, name, size, position):
         obj = CollisionObject()
@@ -77,7 +102,7 @@ class SceneManager(Node):
             ps = PlanningScene()
             ps.is_diff = True
             ps.world.collision_objects.append(obj)
-            self.scene_pub.publish(ps)
+            self._apply_scene(ps)
         
         # ADD objects from config
         for obj_name, obj_data in objects.items():
@@ -136,7 +161,7 @@ class SceneManager(Node):
             ps = PlanningScene()
             ps.is_diff = True
             ps.world.collision_objects.append(co)
-            self.scene_pub.publish(ps)
+            self._apply_scene(ps)
             self.get_logger().info(f'  Loaded: {obj_name} ({obj_type})')
         
         return True
@@ -160,7 +185,7 @@ class SceneManager(Node):
         scene.world.collision_objects.append(conveyor)
         self.get_logger().info('  ✅ Banda agregada')
         
-        self.scene_pub.publish(scene)
+        self._apply_scene(scene)
         self.get_logger().info(f'✅ Escena cargada: {len(scene.world.collision_objects)} objetos')
 
     def load_scene(self):
