@@ -2,7 +2,7 @@
 """
 Despaletizador — modo prueba
 - Orientación TCP completamente fija (ventosa siempre abajo, yaw fijo)
-- AG-160 gripper real vía Modbus RTU/TCP
+- Sin gripper — solo movimientos de brazo
 - Bloquea hasta que MoveIt termine cada movimiento
 """
 
@@ -27,10 +27,6 @@ from geometry_msgs.msg import Pose
 from shape_msgs.msg import SolidPrimitive
 
 from dobot_msgs_v4.msg import ToolVectorActual
-from dobot_msgs_v4.srv import (
-    ModbusCreate, SetHoldRegs, GetHoldRegs,
-    SetToolPower, EnableRobot, ModbusClose
-)
 
 
 def rpy_to_quaternion(roll_deg, pitch_deg, yaw_deg):
@@ -55,32 +51,6 @@ ORI_TOL_ROLL  = 0.05
 ORI_TOL_PITCH = 0.05
 ORI_TOL_YAW   = 0.05
 
-# ── AG-160 Gripper Configuration ───────────────────────────
-GRIPPER_MODBUS_IP       = "192.168.5.1"
-GRIPPER_MODBUS_PORT     = 60000
-GRIPPER_MODBUS_SLAVE_ID = 1
-GRIPPER_MODBUS_IS_RTU   = 1  # RTU mode — Dobot port 60000 uses Modbus RTU over TCP (see DH demo: ModbusCreate(...,true))
-GRIPPER_MODBUS_INDEX    = 0
-
-GRIPPER_REG_INIT        = 256
-GRIPPER_REG_FORCE       = 257
-GRIPPER_REG_SPEED       = 258
-GRIPPER_REG_POSITION    = 259
-GRIPPER_REG_INIT_STATUS = 512
-GRIPPER_REG_STATUS      = 513
-GRIPPER_REG_ACTUAL_POS  = 514
-
-GRIPPER_INIT_VALUE      = 165
-GRIPPER_FORCE           = 50
-GRIPPER_SPEED           = 50
-GRIPPER_OPEN_POS        = 1000
-GRIPPER_CLOSE_POSITIONS = [500, 300, 100]
-GRIPPER_POLL_TIMEOUT    = 5.0
-GRIPPER_POLL_INTERVAL   = 0.1
-GRIPPER_INIT_TIMEOUT    = 15.0
-GRIPPER_INTER_CMD_DELAY = 0.01
-GRIPPER_POWER_STABILIZATION_S = 10.0  # AG-160 spec: 8-10s after SetToolPower before Modbus init
-
 # ── Home Position (joint-space, degrees → radians) ────────────────────────────
 HOME_JOINT_DEG = [0, -30, 90, 0, -60, 0]   # arm folded forward/down, below ceiling
 HOME_JOINT_RAD = [math.radians(d) for d in HOME_JOINT_DEG]
@@ -97,7 +67,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('=' * 60)
         self.get_logger().info('   🧃 DESPALETIZADOR — MODO PRUEBA 🧃')
-        self.get_logger().info('   Orientación TCP fija | AG-160 gripper real')
+        self.get_logger().info('   Orientación TCP fija | Sin gripper')
         self.get_logger().info('=' * 60)
 
         # ── Config ───────────────────────────────────────────
@@ -181,23 +151,6 @@ class DepalletizerNode(Node):
         # ── Pre-flight: esperar joint states válidos ──────────────
         if not self._wait_for_valid_joint_states(timeout_sec=15.0):
             self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
-
-        # ── AG-160 Gripper Service Clients ─────────────────────────
-        self.gripper_initialized = False
-        self._gripper_modbus_index = GRIPPER_MODBUS_INDEX  # assigned dynamically in gripper_init
-        _ns = '/dobot_bringup_ros2/srv'
-        self._gripper_enable_cli       = self.create_client(EnableRobot,  f'{_ns}/EnableRobot',  callback_group=self.cb_group)
-        self._gripper_power_cli        = self.create_client(SetToolPower, f'{_ns}/SetToolPower', callback_group=self.cb_group)
-        self._gripper_create_cli       = self.create_client(ModbusCreate, f'{_ns}/ModbusCreate', callback_group=self.cb_group)
-        self._gripper_set_cli          = self.create_client(SetHoldRegs,  f'{_ns}/SetHoldRegs',  callback_group=self.cb_group)
-        self._gripper_get_cli          = self.create_client(GetHoldRegs,  f'{_ns}/GetHoldRegs',  callback_group=self.cb_group)
-        self._gripper_close_modbus_cli = self.create_client(ModbusClose,  f'{_ns}/ModbusClose',  callback_group=self.cb_group)
-
-        # ── Inicialización diferida del gripper ───────────────
-        # Se dispara 2s después de que el executor ya está haciendo spin,
-        # garantizando que las respuestas de servicios se procesen correctamente.
-        self.get_logger().info('🤏 Gripper AG-160: inicialización diferida 2s...')
-        self._gripper_init_timer = self.create_timer(2.0, self._deferred_gripper_init)
 
         # ── UI thread ────────────────────────────────────────
         self.ui_thread = threading.Thread(target=self.user_interface)
@@ -319,256 +272,6 @@ class DepalletizerNode(Node):
 
         self.destroy_subscription(sub)
         return False
-
-    # ─────────────────────────────────────────────────────────
-    # Gripper AG-160 — Control real vía Modbus RTU/TCP
-    # ─────────────────────────────────────────────────────────
-    def _call_gripper_service(self, client, request, timeout=3.0):
-        """Helper: llama un servicio ROS2. El MultiThreadedExecutor procesa
-        la respuesta en background; usamos Event para esperar sin bloquear."""
-        if not client.service_is_ready():
-            if not client.wait_for_service(timeout_sec=2.0):
-                self.get_logger().error(f'⚠️ Servicio no disponible: {client.srv_name}')
-                return None
-        future = client.call_async(request)
-        event = threading.Event()
-        future.add_done_callback(lambda f: event.set())
-        if not event.wait(timeout=timeout):
-            self.get_logger().error(f'❌ Timeout servicio {client.srv_name}')
-            return None
-        if future.exception() is not None:
-            self.get_logger().error(f'❌ Exception {client.srv_name}: {future.exception()}')
-            return None
-        resp = future.result()
-        self.get_logger().debug(
-            f'[Gripper] {client.srv_name} '
-            f'res={getattr(resp,"res",None)} '
-            f'robot_return="{getattr(resp,"robot_return","")}"')
-        return resp
-
-    def _set_hold_reg(self, addr, value):
-        req = SetHoldRegs.Request()
-        req.index    = self._gripper_modbus_index
-        req.addr     = addr
-        req.count    = 1
-        req.val_tab  = '{' + str(value) + '}'
-        req.val_type = 'U16'
-        resp = self._call_gripper_service(self._gripper_set_cli, req)
-        time.sleep(GRIPPER_INTER_CMD_DELAY)
-        if resp is None or resp.res != 0:
-            self.get_logger().error(
-                f'❌ SetHoldReg addr={addr} value={value} FALLÓ (res={getattr(resp,"res",None)})')
-            return False
-        return True
-
-    def _get_hold_reg(self, addr):
-        req = GetHoldRegs.Request()
-        req.index    = self._gripper_modbus_index
-        req.addr     = addr
-        req.count    = 1
-        req.val_type = 'U16'
-        resp = self._call_gripper_service(self._gripper_get_cli, req)
-        if resp is None or resp.res != 0:
-            self.get_logger().error(
-                f'❌ GetHoldReg addr={addr} FALLÓ (res={getattr(resp,"res",None)})')
-            return None
-        raw = resp.robot_return
-        self.get_logger().debug(f'[Gripper] GetHoldReg addr={addr} raw="{raw}"')
-        try:
-            s = raw.strip().strip('{}')
-            parts = [p.strip() for p in s.split(',') if p.strip()]
-            return int(parts[0]) if parts else None
-        except Exception as e:
-            self.get_logger().error(f'❌ Error parseando robot_return="{raw}": {e}')
-            return None
-
-    def _deferred_gripper_init(self):
-        """Timer de un disparo — se llama 2s después del spin, cuando el
-        executor ya está activo y puede procesar respuestas de servicios."""
-        self._gripper_init_timer.cancel()
-        self.get_logger().info('🤏 Inicializando gripper AG-160...')
-        self.gripper_init()
-
-    def gripper_init(self):
-        """Inicialización AG-160 con un reintento automático si el primer intento falla."""
-        if not self._gripper_init_attempt():
-            self.get_logger().warn('⚠️ [Gripper] Primer intento falló — reintentando en 3s...')
-            time.sleep(3.0)
-            return self._gripper_init_attempt()
-        return True
-
-    def _gripper_init_attempt(self):
-        """Secuencia completa de inicialización AG-160:
-        EnableRobot → SetToolPower(1) → ModbusClose(0-4) → ModbusCreate → verify → init(165) → poll reg512 → force/speed"""
-        self.get_logger().info('🤏 [Gripper] Iniciando secuencia de inicialización...')
-
-        # 1. EnableRobot
-        resp = self._call_gripper_service(self._gripper_enable_cli, EnableRobot.Request(), timeout=15.0)
-        if resp is None or resp.res != 0:
-            self.get_logger().warn(f'⚠️ [Gripper] EnableRobot res={getattr(resp,"res",None)} — continuando')
-        else:
-            self.get_logger().info('   ✅ EnableRobot OK')
-        # Esperar que el gripper arranque tras recibir alimentación
-        self.get_logger().info('   ⏳ Esperando arranque del gripper (3s)...')
-        time.sleep(3.0)
-
-        # 2. SetToolPower(1)
-        req = SetToolPower.Request()
-        req.status = 1
-        resp = self._call_gripper_service(self._gripper_power_cli, req, timeout=15.0)
-        if resp is None or resp.res != 0:
-            self.get_logger().warn(f'⚠️ [Gripper] SetToolPower(1) res={getattr(resp,"res",None)}')
-        else:
-            self.get_logger().info('   ✅ SetToolPower(1) OK')
-
-        # AG-160 requiere 8-10s de estabilización tras alimentación antes de comunicación Modbus
-        self.get_logger().info(f'   ⏳ Esperando estabilización AG-160 ({GRIPPER_POWER_STABILIZATION_S}s)...')
-        time.sleep(GRIPPER_POWER_STABILIZATION_S)
-
-        # 3. ModbusClose(0-4) — liberar TODOS los slots previos
-        self.get_logger().info('   🔄 Cerrando todas las conexiones Modbus previas (0-4)...')
-        for idx in range(5):
-            req_close = ModbusClose.Request()
-            req_close.index = idx
-            resp_close = self._call_gripper_service(self._gripper_close_modbus_cli, req_close, timeout=3.0)
-            if resp_close is not None and resp_close.res == 0:
-                self.get_logger().info(f'      ModbusClose({idx}) OK')
-            # res=-1 en índice inexistente es seguro — ignorar
-            time.sleep(GRIPPER_INTER_CMD_DELAY)
-
-        # 4. ModbusCreate
-        req = ModbusCreate.Request()
-        req.ip       = GRIPPER_MODBUS_IP
-        req.port     = GRIPPER_MODBUS_PORT
-        req.slave_id = GRIPPER_MODBUS_SLAVE_ID
-        req.is_rtu   = GRIPPER_MODBUS_IS_RTU
-        resp = self._call_gripper_service(self._gripper_create_cli, req, timeout=15.0)
-        if resp is None or resp.res != 0:
-            self.get_logger().error(f'❌ [Gripper] ModbusCreate FALLÓ (res={getattr(resp,"res",None)})')
-            self.gripper_initialized = False
-            return False
-        # Tras cerrar todos los índices, el nuevo índice asignado es siempre 0
-        self._gripper_modbus_index = 0
-        self.get_logger().info(f'   ✅ ModbusCreate OK (index={self._gripper_modbus_index})')
-        # Esperar que la conexión Modbus TCP se establezca completamente
-        self.get_logger().info('   ⏳ Esperando estabilización Modbus (2s)...')
-        time.sleep(2.0)
-
-        # 4b. Verificar conectividad Modbus con lectura de prueba
-        test_val = self._get_hold_reg(GRIPPER_REG_INIT_STATUS)
-        if test_val is None:
-            self.get_logger().error('❌ [Gripper] Verificación de conectividad Modbus fallida')
-            self.gripper_initialized = False
-            return False
-        self.get_logger().info(f'   ✅ Modbus conectividad verificada (reg 512 = {test_val})')
-
-        # 5. Escribir init 165 en reg 256
-        if not self._set_hold_reg(GRIPPER_REG_INIT, GRIPPER_INIT_VALUE):
-            self.get_logger().error('❌ [Gripper] Fallo escribiendo init reg 256=165')
-            self.gripper_initialized = False
-            return False
-        self.get_logger().info('   ✅ Init reg 256=165 escrito')
-
-        # 6. Poll reg 512 hasta == 1
-        self.get_logger().info('   ⏳ Esperando calibración AG-160 (reg 512 == 1)...')
-        t0 = time.time()
-        ready = False
-        while time.time() - t0 < GRIPPER_INIT_TIMEOUT:
-            val = self._get_hold_reg(GRIPPER_REG_INIT_STATUS)
-            if val == 1:
-                self.get_logger().info('   ✅ Gripper AG-160 calibrado (reg 512 == 1)')
-                ready = True
-                break
-            time.sleep(0.5)
-        if not ready:
-            self.get_logger().error(
-                f'❌ [Gripper] Timeout esperando calibración ({GRIPPER_INIT_TIMEOUT}s)')
-            self.gripper_initialized = False
-            return False
-
-        # 7. Configurar fuerza y velocidad
-        if not self._set_hold_reg(GRIPPER_REG_FORCE, GRIPPER_FORCE):
-            self.get_logger().warn(f'⚠️ [Gripper] No se pudo establecer fuerza={GRIPPER_FORCE}')
-        if not self._set_hold_reg(GRIPPER_REG_SPEED, GRIPPER_SPEED):
-            self.get_logger().warn(f'⚠️ [Gripper] No se pudo establecer velocidad={GRIPPER_SPEED}')
-
-        self.gripper_initialized = True
-        self.get_logger().info(
-            f'✅ AG-160 gripper inicializado (fuerza={GRIPPER_FORCE}%, velocidad={GRIPPER_SPEED}%)')
-        return True
-
-    def gripper_open(self):
-        if not self.gripper_initialized:
-            self.get_logger().warn('⚠️ [Gripper] No inicializado — omitiendo apertura')
-            return False
-        self.get_logger().info(f'🤏 Abriendo gripper (pos={GRIPPER_OPEN_POS})')
-        if not self._set_hold_reg(GRIPPER_REG_POSITION, GRIPPER_OPEN_POS):
-            return False
-        t0 = time.time()
-        while time.time() - t0 < GRIPPER_POLL_TIMEOUT:
-            status = self._get_hold_reg(GRIPPER_REG_STATUS)
-            if status is not None and status != 0:
-                actual = self._get_hold_reg(GRIPPER_REG_ACTUAL_POS)
-                self.get_logger().info(f'   ✅ Gripper abierto (status={status}, pos_real={actual})')
-                return True
-            time.sleep(GRIPPER_POLL_INTERVAL)
-        self.get_logger().error('❌ [Gripper] Timeout esperando apertura (reg 513)')
-        return False
-
-    def _gripper_close_to(self, position):
-        if not self._set_hold_reg(GRIPPER_REG_POSITION, position):
-            return None
-        t0 = time.time()
-        while time.time() - t0 < GRIPPER_POLL_TIMEOUT:
-            status = self._get_hold_reg(GRIPPER_REG_STATUS)
-            if status is not None and status != 0:
-                actual = self._get_hold_reg(GRIPPER_REG_ACTUAL_POS)
-                self.get_logger().info(
-                    f'   [Gripper] close pos={position} status={status} pos_real={actual}')
-                return status
-            time.sleep(GRIPPER_POLL_INTERVAL)
-        self.get_logger().error(f'❌ [Gripper] Timeout cerrando a pos={position}')
-        return None
-
-    def gripper_verify_grasp(self):
-        if not self.gripper_initialized:
-            self.get_logger().warn('⚠️ [Gripper] No inicializado — omitiendo agarre')
-            return False
-        for pos in GRIPPER_CLOSE_POSITIONS:
-            self.get_logger().info(f'🤏 Cerrando gripper (pos={pos})...')
-            status = self._gripper_close_to(pos)
-            if status == 2:
-                actual = self._get_hold_reg(GRIPPER_REG_ACTUAL_POS)
-                self.get_logger().info(f'   ✅ Agarre verificado (pos_cmd={pos}, pos_real={actual})')
-                return True
-            else:
-                if status == 3:
-                    self.get_logger().warn(f'   ⚠️ Sin objeto en pos={pos}, probando más cerrado...')
-                elif status is None:
-                    self.get_logger().warn(f'   ⚠️ Timeout/error en pos={pos}')
-                else:
-                    self.get_logger().warn(f'   ⚠️ Estado inesperado {status} en pos={pos}')
-                self.gripper_open()
-        self.get_logger().error('❌ Agarre fallido tras todos los reintentos (500→300→100)')
-        self.gripper_open()
-        return False
-
-    def gripper_destroy(self):
-        if self.gripper_initialized:
-            self.get_logger().info('🤏 [Gripper] Apagando — abriendo gripper...')
-            try:
-                self.gripper_open()
-            except Exception as e:
-                self.get_logger().warn(f'⚠️ [Gripper] Error abriendo en shutdown: {e}')
-        self.get_logger().info('🤏 [Gripper] Cerrando conexión Modbus...')
-        try:
-            req = ModbusClose.Request()
-            req.index = self._gripper_modbus_index
-            resp = self._call_gripper_service(
-                self._gripper_close_modbus_cli, req, timeout=3.0)
-            self.get_logger().info(f'   ModbusClose res={getattr(resp,"res",None)}')
-        except Exception as e:
-            self.get_logger().warn(f'⚠️ [Gripper] Error en ModbusClose: {e}')
 
     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
@@ -803,7 +506,7 @@ class DepalletizerNode(Node):
             self.get_logger().info('─' * 50)
 
             # PICK
-            self.gripper_open()
+            self.get_logger().info('   [Sin gripper] Iniciando movimiento...')
 
             if not self.move_to_pose(x, y, z_grasp + self.z_approach, label='APPROACH'):
                 return False
@@ -812,10 +515,7 @@ class DepalletizerNode(Node):
             if not self.move_to_pose(x, y, z_grasp, label='DESCENSO'):
                 return False
 
-            grasp_ok = self.gripper_verify_grasp()
-            if not grasp_ok:
-                self.get_logger().error('❌ No se pudo agarrar el objeto — abortando ciclo')
-                return False
+            self.get_logger().info('   [Sin gripper] En posición de agarre')
 
             if not self.move_to_pose(x, y, z_grasp + self.z_lift, label='LIFT'):
                 return False
@@ -828,7 +528,7 @@ class DepalletizerNode(Node):
             if not self.move_to_pose(px, py, pz, label='PLACE'):
                 return False
 
-            self.gripper_open()
+            self.get_logger().info('   [Sin gripper] En posición de depósito')
 
             if not self.move_to_pose(px, py, pz + 0.1, label='PLACE LIFT'):
                 return False
@@ -908,7 +608,6 @@ class DepalletizerNode(Node):
         self.get_logger().info(f'  ❓ DESCONOCIDO: {self.juice_counts.get(JUICE_TYPE_UNKNOWN, 0)}')
         self.get_logger().info(f'  📦 TOTAL:       {self.picked_count}')
         self.get_logger().info('=' * 50)
-        self.gripper_destroy()
         super().destroy_node()
 
 
