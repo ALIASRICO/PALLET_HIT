@@ -274,6 +274,18 @@ class DepalletizerNode(Node):
         return False
 
     # ─────────────────────────────────────────────────────────
+    # Helper: esperar future sin spin propio (el executor ya spinea)
+    # ─────────────────────────────────────────────────────────
+    def _wait_future(self, future, timeout_sec=30.0):
+        """Polling del future — compatible con MultiThreadedExecutor en marcha."""
+        deadline = time.time() + timeout_sec
+        while not future.done():
+            if time.time() > deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
     # ─────────────────────────────────────────────────────────
     def move_to_pose(self, x, y, z, label=''):
@@ -322,9 +334,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info(f'   ⏳ Planeando...')
         future = self.move_group_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
-
-        if future.result() is None:
+        if not self._wait_future(future, timeout_sec=15.0):
             self.get_logger().error('❌ Timeout en aceptación del goal')
             return False
 
@@ -335,9 +345,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Ejecutando trayectoria...')
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=120.0)
-
-        if result_future.result() is None:
+        if not self._wait_future(result_future, timeout_sec=120.0):
             self.get_logger().error('❌ Timeout en ejecución')
             return False
 
@@ -405,9 +413,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Planeando hacia Home...')
         future = self.move_group_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
-
-        if future.result() is None:
+        if not self._wait_future(future, timeout_sec=15.0):
             self.get_logger().error('❌ Timeout en aceptación del goal (Home)')
             return False
 
@@ -418,9 +424,7 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Ejecutando trayectoria Home...')
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=120.0)
-
-        if result_future.result() is None:
+        if not self._wait_future(result_future, timeout_sec=120.0):
             self.get_logger().error('❌ Timeout en ejecución Home')
             return False
 
