@@ -241,11 +241,32 @@ class YOLOJuiceDetector(Node):
                     elif cls_id in (CLASS_ID_HIT_MANGO, CLASS_ID_HIT_MORA):
                         hit_raw.append(det_dict)
 
-                # Associate cara_F with juice type
+                # Associate cara_F with juice type (primary pick targets)
                 cara_f_associated = associate_cara_f_with_hit(cara_f_raw, hit_raw)
 
+                # Fallback: use HIT detections that have no nearby cara_F as pick targets
+                # Find which HITs were already "used" by a cara_F association
+                associated_hit_positions = set()
+                for det in cara_f_associated:
+                    if det['juice_type'] != JUICE_TYPE_UNKNOWN:
+                        for hit in hit_raw:
+                            dx = det['cx'] - hit['cx']
+                            dy = det['cy'] - hit['cy']
+                            if (dx*dx + dy*dy) <= 150.0**2:
+                                associated_hit_positions.add(id(hit))
+
+                # HIT detections with no associated cara_F become pick targets themselves
+                hit_fallback = []
+                for hit in hit_raw:
+                    if id(hit) not in associated_hit_positions:
+                        jt = JUICE_TYPE_MANGO if hit['class_id'] == CLASS_ID_HIT_MANGO else JUICE_TYPE_MORA
+                        hit_fallback.append({**hit, 'juice_type': jt})
+
+                # Combine: cara_F first (preferred), then HIT fallbacks
+                all_pick_targets = cara_f_associated + hit_fallback
+
                 # Build 8-field output: [id, x_mm, y_mm, z_mm, conf, w_px, h_px, juice_type]
-                for pub_id, det in enumerate(cara_f_associated):
+                for pub_id, det in enumerate(all_pick_targets):
                     juice_type = det['juice_type']
                     if juice_type == JUICE_TYPE_MANGO:
                         overlay_color = (0, 255, 0)    # Green
@@ -259,7 +280,8 @@ class YOLOJuiceDetector(Node):
 
                     cx_px2 = int(det['cx'])
                     cy_px2 = int(det['cy'])
-                    cv2.putText(display, f'{type_label} #{pub_id}',
+                    src_label = '(cara_F)' if pub_id < len(cara_f_associated) else '(hit)'
+                    cv2.putText(display, f'{type_label} #{pub_id} {src_label}',
                                 (cx_px2, cy_px2 - 25),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, overlay_color, 2)
 
