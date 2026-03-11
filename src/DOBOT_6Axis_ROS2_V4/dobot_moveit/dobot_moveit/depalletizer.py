@@ -27,6 +27,7 @@ from geometry_msgs.msg import Pose
 from shape_msgs.msg import SolidPrimitive
 
 from dobot_msgs_v4.msg import ToolVectorActual
+from dobot_msgs_v4.srv import DOInstant as DOInstantSrv
 
 
 def rpy_to_quaternion(roll_deg, pitch_deg, yaw_deg):
@@ -148,6 +149,11 @@ class DepalletizerNode(Node):
         else:
             self.get_logger().error('❌ MoveGroup no disponible — verifica que está corriendo')
 
+        # DO1 — control vacío/ventosa
+        self.do_instant_client = self.create_client(
+            DOInstantSrv, 'dobot_bringup_ros2/srv/DOInstant',
+            callback_group=self.cb_group)
+
         # ── Pre-flight: esperar joint states válidos ──────────────
         if not self._wait_for_valid_joint_states(timeout_sec=15.0):
             self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
@@ -257,7 +263,7 @@ class DepalletizerNode(Node):
         t0 = time.time()
         last_log_time = 0.0
         while time.time() - t0 < timeout_sec:
-            rclpy.spin_once(self, timeout_sec=0.1)
+            time.sleep(0.1)
             if self._js_valid:
                 pos_str = ', '.join(f'{p:.4f}' for p in _valid_pos[0])
                 self.get_logger().info(f'✅ Joint states válidos recibidos: [{pos_str}]')
@@ -273,19 +279,7 @@ class DepalletizerNode(Node):
         self.destroy_subscription(sub)
         return False
 
-    # ─────────────────────────────────────────────────────────
-    # Helper: esperar future sin spin propio (el executor ya spinea)
-    # ─────────────────────────────────────────────────────────
-    def _wait_future(self, future, timeout_sec=30.0):
-        """Polling del future — compatible con MultiThreadedExecutor en marcha."""
-        deadline = time.time() + timeout_sec
-        while not future.done():
-            if time.time() > deadline:
-                return False
-            time.sleep(0.05)
-        return True
-
-    # ─────────────────────────────────────────────────────────
+     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
     # ─────────────────────────────────────────────────────────
     def move_to_pose(self, x, y, z, label=''):
@@ -334,7 +328,9 @@ class DepalletizerNode(Node):
 
         self.get_logger().info(f'   ⏳ Planeando...')
         future = self.move_group_client.send_goal_async(goal)
-        if not self._wait_future(future, timeout_sec=15.0):
+        _accept_event = threading.Event()
+        future.add_done_callback(lambda f: _accept_event.set())
+        if not _accept_event.wait(timeout=15.0):
             self.get_logger().error('❌ Timeout en aceptación del goal')
             return False
 
@@ -345,7 +341,9 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Ejecutando trayectoria...')
         result_future = goal_handle.get_result_async()
-        if not self._wait_future(result_future, timeout_sec=120.0):
+        _result_event = threading.Event()
+        result_future.add_done_callback(lambda f: _result_event.set())
+        if not _result_event.wait(timeout=120.0):
             self.get_logger().error('❌ Timeout en ejecución')
             return False
 
@@ -413,7 +411,9 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Planeando hacia Home...')
         future = self.move_group_client.send_goal_async(goal)
-        if not self._wait_future(future, timeout_sec=15.0):
+        _accept_event = threading.Event()
+        future.add_done_callback(lambda f: _accept_event.set())
+        if not _accept_event.wait(timeout=15.0):
             self.get_logger().error('❌ Timeout en aceptación del goal (Home)')
             return False
 
@@ -424,7 +424,9 @@ class DepalletizerNode(Node):
 
         self.get_logger().info('   ⏳ Ejecutando trayectoria Home...')
         result_future = goal_handle.get_result_async()
-        if not self._wait_future(result_future, timeout_sec=120.0):
+        _result_event = threading.Event()
+        result_future.add_done_callback(lambda f: _result_event.set())
+        if not _result_event.wait(timeout=120.0):
             self.get_logger().error('❌ Timeout en ejecución Home')
             return False
 
@@ -442,6 +444,25 @@ class DepalletizerNode(Node):
         desc = error_names.get(code, f'código {code}')
         self.get_logger().error(f'❌ MoveIt falló (Home): {desc}')
         return False
+
+    # ─────────────────────────────────────────────────────────
+    # DO1 control
+    # ─────────────────────────────────────────────────────────
+    def set_do1(self, status: int):
+        """Controla salida digital DO1 (vacío/ventosa). status: 1=ON, 0=OFF."""
+        label = 'ON 🟢' if status == 1 else 'OFF 🔴'
+        self.get_logger().info(f'   💨 DO1 → {label}')
+        if not self.do_instant_client.service_is_ready():
+            self.get_logger().warn('⚠️ DOInstant service no disponible — continuando sin DO1')
+            return
+        req = DOInstantSrv.Request()
+        req.index = 1
+        req.status = status
+        future = self.do_instant_client.call_async(req)
+        _do1_event = threading.Event()
+        future.add_done_callback(lambda f: _do1_event.set())
+        if not _do1_event.wait(timeout=3.0):
+            self.get_logger().warn('⚠️ DOInstant timeout')
 
     # ─────────────────────────────────────────────────────────
     # Verificación XY
@@ -510,7 +531,7 @@ class DepalletizerNode(Node):
             self.get_logger().info('─' * 50)
 
             # PICK
-            self.get_logger().info('   [Sin gripper] Iniciando movimiento...')
+            self.get_logger().info('   Iniciando ciclo pick & place...')
 
             if not self.move_to_pose(x, y, z_grasp + self.z_approach, label='APPROACH'):
                 return False
@@ -518,8 +539,7 @@ class DepalletizerNode(Node):
                 return False
             if not self.move_to_pose(x, y, z_grasp, label='DESCENSO'):
                 return False
-
-            self.get_logger().info('   [Sin gripper] En posición de agarre')
+            self.set_do1(1)  # ← vacío ON: robot en posición de agarre
 
             if not self.move_to_pose(x, y, z_grasp + self.z_lift, label='LIFT'):
                 return False
@@ -531,8 +551,9 @@ class DepalletizerNode(Node):
                 return False
             if not self.move_to_pose(px, py, pz, label='PLACE'):
                 return False
+            self.set_do1(0)  # ← vacío OFF: soltar en cinta transportadora
 
-            self.get_logger().info('   [Sin gripper] En posición de depósito')
+            self.get_logger().info('   En posición de depósito')
 
             if not self.move_to_pose(px, py, pz + 0.1, label='PLACE LIFT'):
                 return False
