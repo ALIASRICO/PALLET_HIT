@@ -72,6 +72,7 @@ INIT_TIMEOUT    = 15.0
 POLL_TIMEOUT    = 5.0
 POLL_INTERVAL   = 0.1
 INTER_CMD_DELAY = 0.01
+POWER_STABILIZATION_S = 10.0  # AG-160 spec: 8-10s after SetToolPower before Modbus init
 
 # ---------------------------------------------------------------------------
 # Status lookup
@@ -224,6 +225,10 @@ class GripperTestNode(Node):
         passed = resp is not None and resp.res == 0
         detail = f'res={getattr(resp, "res", None)}'
         self._record('test_set_tool_power', passed, detail)
+        if passed:
+            # AG-160 requires stabilization time after tool power before Modbus operations
+            self.get_logger().info(f'   ⏳ AG-160 power stabilization ({POWER_STABILIZATION_S}s)...')
+            time.sleep(POWER_STABILIZATION_S)
         return passed
 
     def test_modbus_create(self):

@@ -79,6 +79,7 @@ GRIPPER_POLL_TIMEOUT    = 5.0
 GRIPPER_POLL_INTERVAL   = 0.1
 GRIPPER_INIT_TIMEOUT    = 15.0
 GRIPPER_INTER_CMD_DELAY = 0.01
+GRIPPER_POWER_STABILIZATION_S = 10.0  # AG-160 spec: 8-10s after SetToolPower before Modbus init
 
 # ── Home Position (joint-space, degrees → radians) ────────────────────────────
 HOME_JOINT_DEG = [0, -30, 90, 0, -60, 0]   # arm folded forward/down, below ceiling
@@ -419,6 +420,10 @@ class DepalletizerNode(Node):
             self.get_logger().warn(f'⚠️ [Gripper] SetToolPower(1) res={getattr(resp,"res",None)}')
         else:
             self.get_logger().info('   ✅ SetToolPower(1) OK')
+
+        # AG-160 requiere 8-10s de estabilización tras alimentación antes de comunicación Modbus
+        self.get_logger().info(f'   ⏳ Esperando estabilización AG-160 ({GRIPPER_POWER_STABILIZATION_S}s)...')
+        time.sleep(GRIPPER_POWER_STABILIZATION_S)
 
         # 3. ModbusClose(0-4) — liberar TODOS los slots previos
         self.get_logger().info('   🔄 Cerrando todas las conexiones Modbus previas (0-4)...')
