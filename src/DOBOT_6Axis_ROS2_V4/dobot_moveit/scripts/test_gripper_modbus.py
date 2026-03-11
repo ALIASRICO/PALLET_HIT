@@ -51,7 +51,7 @@ SRV_NS = '/dobot_bringup_ros2/srv'
 MODBUS_IP       = '192.168.5.1'
 MODBUS_PORT     = 60000
 MODBUS_SLAVE_ID = 1
-MODBUS_IS_RTU   = 0  # TCP mode — must match depalletizer.py GRIPPER_MODBUS_IS_RTU
+MODBUS_IS_RTU   = 1  # RTU mode — Dobot port 60000 uses Modbus RTU over TCP (see DH demo: ModbusCreate(...,true))
 MODBUS_INDEX    = 0
 
 REG_INIT        = 256

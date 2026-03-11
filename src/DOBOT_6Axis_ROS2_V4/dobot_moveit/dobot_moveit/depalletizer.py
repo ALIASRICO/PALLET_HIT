@@ -59,7 +59,7 @@ ORI_TOL_YAW   = 0.05
 GRIPPER_MODBUS_IP       = "192.168.5.1"
 GRIPPER_MODBUS_PORT     = 60000
 GRIPPER_MODBUS_SLAVE_ID = 1
-GRIPPER_MODBUS_IS_RTU   = 0
+GRIPPER_MODBUS_IS_RTU   = 1  # RTU mode — Dobot port 60000 uses Modbus RTU over TCP (see DH demo: ModbusCreate(...,true))
 GRIPPER_MODBUS_INDEX    = 0
 
 GRIPPER_REG_INIT        = 256
