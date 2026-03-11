@@ -22,7 +22,7 @@ from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import JointState
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import Constraints, PositionConstraint, OrientationConstraint
+from moveit_msgs.msg import Constraints, PositionConstraint, OrientationConstraint, JointConstraint
 from geometry_msgs.msg import Pose
 from shape_msgs.msg import SolidPrimitive
 
@@ -79,6 +79,10 @@ GRIPPER_POLL_TIMEOUT    = 5.0
 GRIPPER_POLL_INTERVAL   = 0.1
 GRIPPER_INIT_TIMEOUT    = 15.0
 GRIPPER_INTER_CMD_DELAY = 0.01
+
+# ── Home Position (joint-space, degrees → radians) ────────────────────────────
+HOME_JOINT_DEG = [0, -30, 90, 0, -60, 0]   # arm folded forward/down, below ceiling
+HOME_JOINT_RAD = [math.radians(d) for d in HOME_JOINT_DEG]
 
 JUICE_TYPE_MANGO   = 0.0
 JUICE_TYPE_MORA    = 1.0
@@ -172,6 +176,10 @@ class DepalletizerNode(Node):
             self.get_logger().info('✅ MoveGroup conectado')
         else:
             self.get_logger().error('❌ MoveGroup no disponible — verifica que está corriendo')
+
+        # ── Pre-flight: esperar joint states válidos ──────────────
+        if not self._wait_for_valid_joint_states(timeout_sec=15.0):
+            self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
 
         # ── AG-95 Gripper Service Clients ─────────────────────────
         self.gripper_initialized = False
@@ -272,6 +280,44 @@ class DepalletizerNode(Node):
 
     def _tcp_callback(self, msg):
         self._last_tcp = {'x': msg.x, 'y': msg.y, 'z': msg.z}
+
+    # ─────────────────────────────────────────────────────────
+    # Pre-flight: validación de joint states
+    # ─────────────────────────────────────────────────────────
+    def _wait_for_valid_joint_states(self, timeout_sec=15.0):
+        """Espera hasta que /joint_states reporte posiciones no-cero."""
+        self._js_valid = False
+        _valid_pos = [None]
+
+        def _js_check_cb(msg):
+            if len(msg.position) >= 6:
+                if not all(abs(p) < 1e-6 for p in msg.position):
+                    self._js_valid = True
+                    _valid_pos[0] = list(msg.position[:6])
+
+        sub = self.create_subscription(
+            JointState, '/joint_states',
+            _js_check_cb, 10,
+            callback_group=self.cb_group)
+
+        t0 = time.time()
+        last_log_time = 0.0
+        while time.time() - t0 < timeout_sec:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self._js_valid:
+                pos_str = ', '.join(f'{p:.4f}' for p in _valid_pos[0])
+                self.get_logger().info(f'✅ Joint states válidos recibidos: [{pos_str}]')
+                self.destroy_subscription(sub)
+                return True
+            now = time.time()
+            if now - last_log_time >= 2.0:
+                elapsed = now - t0
+                self.get_logger().warn(
+                    f'⏳ Esperando joint states válidos... ({elapsed:.1f}s/{timeout_sec:.1f}s)')
+                last_log_time = now
+
+        self.destroy_subscription(sub)
+        return False
 
     # ─────────────────────────────────────────────────────────
     # Gripper AG-95 — Control real vía Modbus RTU/TCP
@@ -624,6 +670,68 @@ class DepalletizerNode(Node):
         return False
 
     # ─────────────────────────────────────────────────────────
+    # Home position — joint-space goal
+    # ─────────────────────────────────────────────────────────
+    def go_home(self):
+        self.get_logger().info('🏠 Moviendo a posición Home...')
+        joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+
+        goal = MoveGroup.Goal()
+        goal.request.group_name                      = self.planning_group
+        goal.request.num_planning_attempts           = 20
+        goal.request.allowed_planning_time           = 10.0
+        goal.request.max_velocity_scaling_factor     = self.speed_scaling
+        goal.request.max_acceleration_scaling_factor = self.speed_scaling
+
+        constraints = Constraints()
+        for name, position in zip(joint_names, HOME_JOINT_RAD):
+            jc = JointConstraint()
+            jc.joint_name      = name
+            jc.position        = position
+            jc.tolerance_above = 0.01
+            jc.tolerance_below = 0.01
+            jc.weight          = 1.0
+            constraints.joint_constraints.append(jc)
+
+        goal.request.goal_constraints.append(constraints)
+
+        self.get_logger().info('   ⏳ Planeando hacia Home...')
+        future = self.move_group_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
+
+        if future.result() is None:
+            self.get_logger().error('❌ Timeout en aceptación del goal (Home)')
+            return False
+
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error('❌ Goal Home rechazado por MoveGroup')
+            return False
+
+        self.get_logger().info('   ⏳ Ejecutando trayectoria Home...')
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future, timeout_sec=120.0)
+
+        if result_future.result() is None:
+            self.get_logger().error('❌ Timeout en ejecución Home')
+            return False
+
+        result = result_future.result().result
+        code   = result.error_code.val
+
+        if code == MoveItErrorCodes.SUCCESS:
+            self.get_logger().info('   ✅ Robot en posición Home')
+            return True
+
+        error_names = {
+            -1: 'FAILURE', -2: 'PLANNING_FAILED', -9: 'START_STATE_IN_COLLISION',
+            -10: 'START_STATE_VIOLATES_PATH_CONSTRAINTS',
+        }
+        desc = error_names.get(code, f'código {code}')
+        self.get_logger().error(f'❌ MoveIt falló (Home): {desc}')
+        return False
+
+    # ─────────────────────────────────────────────────────────
     # Verificación XY
     # ─────────────────────────────────────────────────────────
     def verify_xy(self, target_x_m, target_y_m):
@@ -645,6 +753,10 @@ class DepalletizerNode(Node):
     # Ciclo pick & place
     # ─────────────────────────────────────────────────────────
     def pick_and_place_cycle(self):
+        if not self._wait_for_valid_joint_states(timeout_sec=5.0):
+            self.get_logger().error('❌ Joint states aún en ceros — ¿está dobot_bringup corriendo?')
+            return
+
         if self.is_busy or self.M_xy is None:
             return False
 
@@ -745,6 +857,8 @@ class DepalletizerNode(Node):
                     self.show_detections()
                 elif choice == '2':
                     self.pick_and_place_cycle()
+                elif choice == 'h':
+                    self.go_home()
                 elif choice == 'q':
                     self.running = False
                     rclpy.shutdown()
@@ -759,6 +873,7 @@ class DepalletizerNode(Node):
         print('    ╠═══════════════════════════════════╣')
         print('    ║  1 = Ver detecciones              ║')
         print('    ║  2 = Pick & Place                 ║')
+        print('    ║  H = Ir a Home                    ║')
         print('    ║  Q = Salir                        ║')
         print('    ╚═══════════════════════════════════╝')
         ok = self.M_xy is not None
