@@ -7,16 +7,13 @@ Sistema de detección de objetos usando YOLOv8-OBB (Oriented Bounding Box) para 
 ```
 pruebas_de_vision/
 ├── pruebas_de_vision/
-│   ├── camera_viewer.py      # Visualizador de cámara Gazebo
+│   ├── camera_viewer.py      # Visualizador simple de cámara Gazebo
 │   ├── train_yolo.py         # Script de entrenamiento YOLO
 │   └── yolo_detector.py      # Nodo ROS2 de detección
 ├── launch/
-│   ├── camera_test.launch.py # Launch de cámara Gazebo
-│   ├── yolo_detection.launch.py
-│   └── yolo_detection_venv.launch.py
-├── scripts/
-│   ├── train_yolo_venv.sh    # Script de entrenamiento con venv
-│   └── run_yolo_detector_venv.sh
+│   ├── camera_test.launch.py         # Launch solo de cámara Gazebo
+│   ├── yolo_detection.launch.py      # Launch completo (Gazebo + detector)
+│   └── yolo_detection_venv.launch.py # Launch con entorno virtual
 └── worlds/
     └── camera_test.sdf       # Mundo Gazebo con cámara
 ```
@@ -46,31 +43,23 @@ source install/setup.bash
 
 ## 🚀 Uso
 
-### Opción A: Usando Scripts de Conveniencia
-
-#### Entrenar Modelo (con entorno virtual)
+### Visualizar cámara (sin detección)
 
 ```bash
-# Usar script de conveniencia
-~/dobot_ws/src/pruebas_de_vision/scripts/train_yolo_venv.sh
-```
-
-#### Ejecutar Detección
-
-```bash
-# Primero lanzar Gazebo con cámara
+# Lanzar Gazebo con cámara
 ros2 launch pruebas_de_vision camera_test.launch.py
 
-# En otra terminal, ejecutar detector
-~/dobot_ws/src/pruebas_de_vision/scripts/run_yolo_detector_venv.sh
+# En otra terminal, ver el feed de la cámara
+source ~/dobot_ws/install/setup.bash
+ros2 run pruebas_de_vision camera_viewer
 ```
 
-### Opción B: Comandos Manuales
+### Opción A: Comandos Manuales
 
 #### Entrenar Modelo
 
 ```bash
-# Activar entorno virtual y ejecutar
+# Ejecutar con el entorno virtual
 ~/dobot_ws/yolo_venv/bin/python3 ~/dobot_ws/src/pruebas_de_vision/pruebas_de_vision/train_yolo.py
 ```
 
@@ -86,10 +75,14 @@ source ~/dobot_ws/install/setup.bash
 ~/dobot_ws/yolo_venv/bin/python3 ~/dobot_ws/src/pruebas_de_vision/pruebas_de_vision/yolo_detector.py
 ```
 
-### Opción C: Launch File Integrado
+### Opción B: Launch File Integrado
 
 ```bash
+# Lanza Gazebo + bridge + detector en un solo comando
 source ~/dobot_ws/install/setup.bash
+ros2 launch pruebas_de_vision yolo_detection.launch.py
+
+# Con entorno virtual (si ultralytics no está en el sistema)
 ros2 launch pruebas_de_vision yolo_detection_venv.launch.py
 ```
 
@@ -100,7 +93,7 @@ ros2 launch pruebas_de_vision yolo_detection_venv.launch.py
 | Topic | Tipo | Descripción |
 |-------|------|-------------|
 | `/vision/detections/image` | sensor_msgs/Image | Imagen con detecciones anotadas |
-| `/vision/detections/poses` | geometry_msgs/PoseArray | Poses 2D de objetos detectados |
+| `/vision/detections/poses` | geometry_msgs/PoseArray | Poses 3D de objetos detectados (z=0, orientación desde ángulo OBB) |
 | `/vision/detections/bboxes` | vision_msgs/Detection2DArray | Bounding boxes orientados |
 
 ### Suscritos
@@ -144,7 +137,7 @@ El modelo se entrena con el dataset **Kartonger** de Roboflow:
 Después del entrenamiento, los modelos se guardan en:
 
 ```
-~/dobot_ws/runs/obb/kartonger_yolov8l/
+~/runs/obb/kartonger_yolov8l/
 ├── weights/
 │   ├── best.pt      # Mejor modelo (usar este)
 │   ├── last.pt      # Última época
@@ -152,6 +145,10 @@ Después del entrenamiento, los modelos se guardan en:
 ├── results.csv      # Métricas de entrenamiento
 └── results.png      # Gráficas de rendimiento
 ```
+
+> **Nota:** Dependiendo de dónde se ejecute `train_yolo.py`, la ruta real puede quedar como
+> `~/runs/obb/runs/obb/kartonger_yolov8l/` (con el subdirectorio duplicado). El detector
+> busca en ambas rutas automáticamente.
 
 ## 🔍 Verificar Instalación
 
