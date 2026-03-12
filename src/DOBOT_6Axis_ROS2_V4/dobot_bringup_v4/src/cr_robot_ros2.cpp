@@ -635,11 +635,6 @@ bool CRRobotRos2::isConnected() const
     return commander_->isConnected();
 }
 
-bool CRRobotRos2::hasValidData() const
-{
-    return commander_->hasValidData();
-}
-
 void CRRobotRos2::getToolVectorActual(double *val)
 {
     commander_->getToolVectorActual(val);

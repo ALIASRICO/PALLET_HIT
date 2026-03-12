@@ -57,15 +57,6 @@ int main(int argc, char *argv[])
       joint_state_msg.position[i] = position[i];
     }
 
-    // Zero-suppression gate: do not publish until recvTask() has received valid data from robot
-    if (!robot->hasValidData()) {
-        RCLCPP_WARN_THROTTLE(robot->get_logger(), *robot->get_clock(), 2000,
-            "Waiting for valid joint data from robot (port 30004)...");
-        rclcpp::spin_some(robot);
-        rate.sleep();
-        continue;
-    }
-
     joint_state_pub->publish(joint_state_msg);
 
     double val[6];

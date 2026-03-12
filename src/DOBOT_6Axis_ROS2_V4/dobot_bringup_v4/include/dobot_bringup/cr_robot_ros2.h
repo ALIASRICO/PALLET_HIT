@@ -155,7 +155,6 @@ public:
     void getJointState(double *point);
     bool isEnable() const;
     bool isConnected() const;
-    bool hasValidData() const;
     void getToolVectorActual(double *val);
 
 protected:

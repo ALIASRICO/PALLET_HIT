@@ -130,7 +130,6 @@ private:
     double tool_vector_[6];
     std::shared_ptr<RealTimeData> real_time_data_;
     std::atomic<bool> is_running_;
-    std::atomic<bool> has_valid_data_{false};
     std::unique_ptr<std::thread> thread_;
     std::shared_ptr<TcpClient> real_time_tcp_;
     std::shared_ptr<TcpClient> dash_board_tcp_;
@@ -148,7 +147,6 @@ public:
     bool callRosService(const std::string cmd, int32_t &err_id, std::vector<std::string> &result_);
     bool isEnable() const;
     bool isConnected() const;
-    bool hasValidData() const { return has_valid_data_.load(); }
     uint16_t getRobotMode() const;
     std::shared_ptr<RealTimeData> getRealData() const;
 

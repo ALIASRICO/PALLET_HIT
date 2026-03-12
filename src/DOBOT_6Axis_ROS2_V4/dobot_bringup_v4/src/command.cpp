@@ -3,7 +3,7 @@
 #include <chrono>
 #include <thread>
 CRCommanderRos2::CRCommanderRos2(const std::string &ip)
-    : current_joint_{}, tool_vector_{}, is_running_(false), has_valid_data_(false)
+    : current_joint_{}, tool_vector_{}, is_running_(false)
 {
     is_running_ = false;
     real_time_data_ = std::make_shared<RealTimeData>();
@@ -53,7 +53,6 @@ void CRCommanderRos2::recvTask()
 
                     memcpy(tool_vector_, real_time_data_->tool_vector_actual, sizeof(tool_vector_));
                     mutex_.unlock();
-                    has_valid_data_.store(true);
                 }
                 else
                 {
