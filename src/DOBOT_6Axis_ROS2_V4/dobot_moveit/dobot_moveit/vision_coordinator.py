@@ -319,8 +319,8 @@ class VisionCoordinator(Node):
                     rclpy.shutdown()
                     break
                     
-            except Exception:
-                pass
+            except Exception as e:
+                self.get_logger().warning(f"Error procesando entrada: {e}")
 
     def display_callback(self):
         """Muestra estado actual"""

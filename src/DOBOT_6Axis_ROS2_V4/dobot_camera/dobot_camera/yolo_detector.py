@@ -18,7 +18,6 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 import os
-from pathlib import Path
 
 from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import Image
@@ -326,8 +325,8 @@ class YOLOJuiceDetector(Node):
         cv2.destroyAllWindows()
         try:
             self.pipeline.stop()
-        except:
-            pass
+        except Exception as e:
+            self.get_logger().warning(f"Error stopping pipeline: {e}")
         super().destroy_node()
 
 

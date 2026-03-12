@@ -24,7 +24,6 @@ class PublisherNode(Node):
             return
         
         joint = msg.position[0:6]
-        print(joint)
         msg2 = JointState()
         msg2.name = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
         msg2.header.stamp = self.get_clock().now().to_msg()

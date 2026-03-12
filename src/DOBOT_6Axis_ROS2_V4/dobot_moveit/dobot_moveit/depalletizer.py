@@ -233,14 +233,12 @@ class DepalletizerNode(Node):
     def joint_states_callback(self, msg):
         if len(msg.position) >= 6:
             self.current_joints = list(msg.position[:6])
-            # DEBUG: Log para validar sincronización de joint states
             self.get_logger().debug(
                 f'🔍 JS callback: joints={["{:.2f}".format(j) for j in msg.position[:6]]}')
 
     def _tcp_callback(self, msg):
         old_tcp = self._last_tcp
         self._last_tcp = {'x': msg.x, 'y': msg.y, 'z': msg.z}
-        # DEBUG: Log para validar frame del TCP
         if old_tcp is not None:
             dx = msg.x - old_tcp['x']
             dy = msg.y - old_tcp['y']
@@ -299,7 +297,6 @@ class DepalletizerNode(Node):
         tag = f'[{label}] ' if label else ''
         self.get_logger().info(f'📍 {tag}Moviendo a: ({x:.3f}, {y:.3f}, {z:.3f})m')
 
-        # DEBUG: Log del estado actual antes de planificar
         if self.current_joints is not None:
             joints_str = ', '.join(f'{j:.3f}' for j in self.current_joints)
             self.get_logger().debug(f'🔍 START_STATE准备: joints=[{joints_str}]')
@@ -492,7 +489,6 @@ class DepalletizerNode(Node):
         if self._last_tcp is None:
             self.get_logger().warn('⚠️ Sin lectura TCP, omitiendo verificación')
             return True
-        # DEBUG: Ver qué valores se comparan
         target_x_mm = target_x_m * 1000.0
         target_y_mm = target_y_m * 1000.0
         err_x = abs(self._last_tcp['x'] - target_x_mm)

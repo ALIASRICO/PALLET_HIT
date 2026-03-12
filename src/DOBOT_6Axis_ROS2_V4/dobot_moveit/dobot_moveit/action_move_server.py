@@ -7,13 +7,14 @@
 
 import time
 import threading
+import math
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from control_msgs.action import FollowJointTrajectory
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from trajectory_msgs.msg import JointTrajectory
 from dobot_msgs_v4.srv import EnableRobot, ServoJ
 import os
 
@@ -72,7 +73,7 @@ class FollowJointTrajectoryServer(Node):
         for i, point in enumerate(trajectory.points):
             joint= []
             for ii in point.positions:
-                joint.append(180 * ii / 3.14159)
+                joint.append(180 * ii / math.pi)
             Positions.append(joint)
             self.get_logger().info(
                 "Point {}: Positions: {}, Velocities: {}, Accelerations: {}, TimeFromStart: {}".format(
