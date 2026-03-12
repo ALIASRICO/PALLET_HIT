@@ -38,15 +38,13 @@ Sistema de banda transportadora para simulación en Gazebo Sim 8 (Harmonic) con 
 ```
 src/gz_conveyorbelt/
 ├── worlds/
-│   └── conveyor_stationary.sdf    # Mundo principal (SDF unificado)
+│   └── conveyor_test.sdf              # Mundo principal (SDF unificado)
 ├── gz_conveyorbelt/
-│   └── conveyor_looper.py         # Nodo ROS2 maestro
+│   └── conveyor_logic_controller.py   # Nodo ROS2 maestro
 ├── config/
-│   └── bridge_config.yaml         # Configuración del bridge
-├── launch/
-│   └── conveyor_stationary.launch.py  # Launch file
-└── scripts/
-    └── conveyor_stationary_control.sh # Script de control
+│   └── bridge_scripted.yaml           # Configuración del bridge
+└── launch/
+    └── conveyor_test.launch.py        # Launch file
 ```
 
 ## Uso
@@ -55,7 +53,7 @@ src/gz_conveyorbelt/
 
 ```bash
 # Terminal 1: Lanzar simulación completa
-ros2 launch gz_conveyorbelt conveyor_stationary.launch.py
+ros2 launch gz_conveyorbelt conveyor_test.launch.py
 
 # Terminal 2: Iniciar banda
 ros2 service call /conveyor/start std_srvs/srv/SetBool "{data: true}"
@@ -65,54 +63,31 @@ ros2 service call /conveyor/start std_srvs/srv/SetBool "{data: true}"
 
 ```bash
 # Terminal 1: Lanzar Gazebo
-gz sim src/gz_conveyorbelt/worlds/conveyor_stationary.sdf -r
+gz sim src/gz_conveyorbelt/worlds/conveyor_test.sdf -r
 
 # Terminal 2: Lanzar bridge
-ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=src/gz_conveyorbelt/config/bridge_config.yaml
+ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=src/gz_conveyorbelt/config/bridge_scripted.yaml
 
-# Terminal 3: Lanzar nodo looper
-ros2 run gz_conveyorbelt conveyor_looper.py --ros-args -p belt_speed:=0.1
+# Terminal 3: Lanzar nodo controlador
+ros2 run gz_conveyorbelt conveyor_logic_controller.py --ros-args -p belt_speed:=0.1
 
 # Terminal 4: Iniciar banda
-./src/gz_conveyorbelt/scripts/conveyor_stationary_control.sh start 0.1
+ros2 service call /conveyor/start std_srvs/srv/SetBool "{data: true}"
 ```
 
 ### Opción 3: Solo Gazebo (sin ROS2)
 
 ```bash
 # Terminal 1: Lanzar Gazebo
-gz sim src/gz_conveyorbelt/worlds/conveyor_stationary.sdf -r
+gz sim src/gz_conveyorbelt/worlds/conveyor_test.sdf -r
 
-# Terminal 2: Control manual
-./src/gz_conveyorbelt/scripts/conveyor_stationary_control.sh start 0.1
-
-# Terminal 3: Reset continuo de pose
-./src/gz_conveyorbelt/scripts/conveyor_stationary_control.sh loop 20 300
+# Terminal 2: Control manual via tópico Gazebo
+gz topic -t /model/conveyor_surface/link/surface/cmd_vel \
+  -m gz.msgs.Twist \
+  -p "linear: {x: 0.1, y: 0, z: 0}, angular: {x: 0, y: 0, z: 0}"
 ```
 
 ## Comandos de Control
-
-### Via Script
-
-```bash
-# Iniciar banda a 0.1 m/s
-./conveyor_stationary_control.sh start 0.1
-
-# Iniciar banda a 0.3 m/s
-./conveyor_stationary_control.sh start 0.3
-
-# Detener banda
-./conveyor_stationary_control.sh stop
-
-# Ver estado
-./conveyor_stationary_control.sh status
-
-# Resetear pose manualmente
-./conveyor_stationary_control.sh reset
-
-# Reset continuo (20 Hz por 60 segundos)
-./conveyor_stationary_control.sh loop 20 60
-```
 
 ### Via ROS2 Services
 
@@ -217,7 +192,7 @@ Esto no debería ocurrir con el diseño actual. Si pasa:
 2. Verificar que `conveyor_surface` NO tenga visual
 3. Verificar que el reset de pose esté funcionando
 
-### El nodo looper no inicia
+### El nodo controlador no inicia
 
 1. Verificar que el bridge esté corriendo
 2. Verificar que los tópicos existan
