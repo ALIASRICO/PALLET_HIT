@@ -181,3 +181,13 @@ gz-sim/
 # RViz
 # ------------------------------------------
 *.rviz.user
+
+# ------------------------------------------
+# Sisyphus (plan AI agent)
+# ------------------------------------------
+# Keep: plans/ (documentation)
+# Ignore: runtime state
+.sisyphus/evidence/
+.sisyphus/notepads/
+.sisyphus/boulder.json
+.sisyphus/run-continuation/
