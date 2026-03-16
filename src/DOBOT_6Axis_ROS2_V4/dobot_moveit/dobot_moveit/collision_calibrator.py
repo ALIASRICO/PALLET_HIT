@@ -252,7 +252,7 @@ except ImportError:
 
 
 class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
-    """Interactive node that guides through calibrating 7 workspace objects."""
+    """Interactive node for calibrating workspace collision objects."""
 
     def __init__(self):
         super().__init__('collision_calibrator')
@@ -453,9 +453,13 @@ class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
     # ── Main calibration loop (runs in daemon thread) ─────────
 
     def _calibration_loop(self):
-        """Sequential calibration of all 7 workspace objects."""
+        """Menú interactivo de calibración de colisiones."""
         try:
-            time.sleep(1.5)  # let subscriptions connect
+            time.sleep(1.5)
+            objects = {}  # Dict de nombre -> datos del objeto
+            place_position = None
+
+            # -- Selección de modo --
             print()
             print("    ╔═════════════════════════════════════════════════╗")
             print("    ║   CALIBRACIÓN DE COLISIONES — Dobot CR20       ║")
@@ -464,104 +468,330 @@ class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
             print("    Mueve el robot con el teach pendant.")
             print("    Presiona ENTER para capturar la posición actual.")
             print()
-            print("    Orden: Suelo → Techo → Mesa → Pallet → Cinta → Cámara → Pared")
-            print()
 
-            objects = {}
+            # Preguntar modo
+            while True:
+                print("    ¿Qué deseas hacer?")
+                print("      1 = Nueva calibración (borrar config anterior)")
+                print("      2 = Agregar objetos al config existente")
+                mode = input("    Opción (1/2): ").strip()
+                if mode in ('1', '2'):
+                    break
+                print("    ⚠️  Opción inválida.")
 
-            # 1. Suelo
-            data = self._calibrate_suelo()
-            objects['suelo'] = data
-            suelo_z = data['z_mm']
-
-            # 2. Techo
-            data = self._calibrate_techo(suelo_z)
-            objects['techo'] = data
-            techo_z = data['z_mm']
-
-            # 3. Mesa de trabajo
-            objects['mesa_trabajo'] = self._calibrate_box(
-                'mesa_trabajo', 'MESA DE TRABAJO')
-
-            # 4. Pallet de jugos
-            objects['pallet_jugos'] = self._calibrate_box(
-                'pallet_jugos', 'PALLET DE JUGOS')
-
-            # 5. Cinta transportadora
-            cinta = self._calibrate_box(
-                'cinta_transportadora', 'CINTA TRANSPORTADORA')
-            objects['cinta_transportadora'] = cinta
-
-            # 6. Soporte de cámara
-            objects['camara_soporte'] = self._calibrate_camara(techo_z)
-
-            # 7. Pared
-            objects['pared'] = self._calibrate_pared(techo_z, suelo_z)
-
-            # ── Derive place position from cinta ──────────────
-            place_pos = derive_place_position(
-                cinta['corner1_mm'], cinta['corner2_mm'],
-                cinta['height_mm'],
-                offset_mm=20.0
-            )
-
-            # ── Build config ──────────────────────────────────
-            config = {
-                'status': 'calibrated',
-                'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'units': 'mm',
-                'objects': objects,
-                'place_position_m': place_pos,
-                'place_position_note': 'Centro de cinta_transportadora + 20mm offset Z. En METROS.',
-            }
-
-            # ── Validate before saving ────────────────────────
-            is_valid, errs = validate_config(config)
-            if not is_valid:
-                print("\n    ❌ Validación fallida:")
-                for e in errs:
-                    print(f"       - {e}")
-                print("    NO se guardó ningún archivo.")
-                rclpy.shutdown()
-                return
-
-            # ── Atomic save ───────────────────────────────────
             config_path = os.path.expanduser('~/dobot_ws/collision_config.json')
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(config_path),
-                                             suffix='.tmp', delete=False) as f:
-                json.dump(config, f, indent=2)
-                tmp_path = f.name
-            os.rename(tmp_path, config_path)
 
-            # ── Final summary ─────────────────────────────────
-            print()
-            print("    ╔═════════════════════════════════════════════════╗")
-            print("    ║           CALIBRACIÓN COMPLETADA ✅             ║")
-            print("    ╚═════════════════════════════════════════════════╝")
-            print()
-            print(f"    Archivo: {config_path}")
-            print(f"    Timestamp: {config['timestamp']}")
-            print()
-            print("    Objetos calibrados:")
-            for obj_name, obj in objects.items():
-                otype = obj['type']
-                if otype == 'floor':
-                    print(f"      • {obj_name}: Z = {obj['z_mm']:.1f} mm")
-                elif otype == 'ceiling':
-                    print(f"      • {obj_name}: Z = {obj['z_mm']:.1f} mm")
-                elif otype == 'box':
-                    print(f"      • {obj_name}: esquinas [{obj['corner1_mm'][0]:.0f},{obj['corner1_mm'][1]:.0f},{obj['corner1_mm'][2]:.0f}] -> [{obj['corner2_mm'][0]:.0f},{obj['corner2_mm'][1]:.0f},{obj['corner2_mm'][2]:.0f}], h={obj['height_mm']:.0f}mm")
-                elif otype == 'pole':
-                    print(f"      • {obj_name}: base=[{obj['bottom_mm'][0]:.0f},{obj['bottom_mm'][1]:.0f},{obj['bottom_mm'][2]:.0f}], w={obj['width_mm']:.0f}mm")
-                elif otype == 'wall':
-                    print(f"      • {obj_name}: [{obj['point1_mm'][0]:.0f},{obj['point1_mm'][1]:.0f}] -> [{obj['point2_mm'][0]:.0f},{obj['point2_mm'][1]:.0f}], grosor={obj['thickness_mm']}mm")
-            print()
-            print(f"    Place position (m): [{place_pos[0]:.4f}, {place_pos[1]:.4f}, {place_pos[2]:.4f}]")
-            print()
+            if mode == '2':
+                # Cargar config existente
+                if os.path.exists(config_path):
+                    try:
+                        with open(config_path, 'r') as f:
+                            existing = json.load(f)
+                        objects = existing.get('objects', {})
+                        place_position_raw = existing.get('place_position_m')
+                        if place_position_raw and len(place_position_raw) == 3:
+                            place_position = list(place_position_raw)
+                        print(f"\n    ✅ Config cargado: {len(objects)} objetos existentes")
+                        for name, obj in objects.items():
+                            print(f"       • {name} ({obj.get('type', '?')})")
+                    except Exception as e:
+                        print(f"\n    ❌ Error leyendo config: {e}")
+                        print("    Iniciando calibración nueva...")
+                        objects = {}
+                else:
+                    print("\n    ⚠️  No existe config previo. Iniciando calibración nueva...")
+                    mode = '1'
 
-            # Signal executor to stop (main() handles shutdown)
-            raise SystemExit(0)
+            # -- Suelo y Techo: obligatorios en modo nuevo --
+            if mode == '1':
+                print()
+                print("    PASO OBLIGATORIO: Calibrar Suelo y Techo")
+                print()
+                # Suelo
+                suelo_data = self._calibrate_suelo()
+                objects['suelo'] = suelo_data
+                suelo_z = suelo_data['z_mm']
+                # Techo
+                techo_data = self._calibrate_techo(suelo_z)
+                objects['techo'] = techo_data
+                techo_z = techo_data['z_mm']
+            else:
+                # En modo agregar: obtener suelo_z y techo_z del config cargado
+                suelo_z = None
+                techo_z = None
+                for name, obj in objects.items():
+                    if obj.get('type') == 'floor':
+                        suelo_z = obj.get('z_mm')
+                    elif obj.get('type') == 'ceiling':
+                        techo_z = obj.get('z_mm')
+
+                # Ofrecer recalibrar suelo/techo si existen
+                if suelo_z is not None or techo_z is not None:
+                    print()
+                    if suelo_z is not None:
+                        print(f"    Suelo existente: Z = {suelo_z:.1f} mm")
+                    if techo_z is not None:
+                        print(f"    Techo existente: Z = {techo_z:.1f} mm")
+                    recal = input("    ¿Recalibrar suelo/techo? (s/N): ").strip().lower()
+                    if recal in ('s', 'si', 'sí', 'y', 'yes'):
+                        # Eliminar floor/ceiling existentes
+                        objects = {k: v for k, v in objects.items()
+                                   if v.get('type') not in ('floor', 'ceiling')}
+                        suelo_data = self._calibrate_suelo()
+                        objects['suelo'] = suelo_data
+                        suelo_z = suelo_data['z_mm']
+                        techo_data = self._calibrate_techo(suelo_z)
+                        objects['techo'] = techo_data
+                        techo_z = techo_data['z_mm']
+
+            # -- Menú principal --
+            while True:
+                print()
+                print("    ╔═══════════════════════════════════════╗")
+                print("    ║  CALIBRACIÓN DE COLISIONES — CR20    ║")
+                print("    ╠═══════════════════════════════════════╣")
+                print("    ║  1 = Añadir objeto                   ║")
+                print("    ║  2 = Ver objetos calibrados          ║")
+                print("    ║  3 = Eliminar objeto                 ║")
+                print("    ║  4 = Definir posición de depósito    ║")
+                print("    ║  5 = Guardar y salir                 ║")
+                print("    ╚═══════════════════════════════════════╝")
+                print(f"    Objetos calibrados: {len(objects)}")
+                choice = input("\n    Opción: ").strip()
+
+                # -- Opción 1: Añadir objeto --
+                if choice == '1':
+                    print()
+                    print("    ¿Qué tipo de objeto?")
+                    print("      1 = Pared (wall)")
+                    print("      2 = Caja / Mesa / Superficie (box)")
+                    print("      3 = Poste / Columna (pole)")
+                    print("      4 = Suelo (floor)")
+                    print("      5 = Techo (ceiling)")
+                    type_choice = input("    Tipo: ").strip()
+                    if type_choice not in ('1', '2', '3', '4', '5'):
+                        print("    ⚠️  Tipo inválido.")
+                        continue
+
+                    # Pedir nombre
+                    while True:
+                        name = input("    Nombre del objeto (ej: pared_norte): ").strip()
+                        if not name:
+                            print("    ⚠️  El nombre no puede estar vacío.")
+                            continue
+                        if name in objects:
+                            print(f"    ❌ Ya existe un objeto con ese nombre. Elimínalo primero (opción 3).")
+                            break
+                        break
+                    else:
+                        continue  # nombre duplicado, volver al menú
+
+                    if name in objects:
+                        continue  # duplicado rechazado
+
+                    # Calibrar según tipo
+                    try:
+                        if type_choice == '1':  # wall
+                            if techo_z is None or suelo_z is None:
+                                print("    ⚠️  Se necesitan suelo y techo para calibrar paredes.")
+                                continue
+                            data = self._calibrate_pared(techo_z, suelo_z)
+                        elif type_choice == '2':  # box
+                            data = self._calibrate_box(name, name.upper())
+                        elif type_choice == '3':  # pole
+                            if techo_z is None:
+                                print("    ⚠️  Se necesita techo para calibrar postes.")
+                                continue
+                            data = self._calibrate_camara(techo_z)
+                        elif type_choice == '4':  # floor
+                            floor_exists = any(v.get('type') == 'floor' for v in objects.values())
+                            if floor_exists:
+                                print("    ❌ Ya hay un objeto tipo suelo. Elimínalo primero (opción 3).")
+                                continue
+                            data = self._calibrate_suelo()
+                            suelo_z = data['z_mm']
+                        elif type_choice == '5':  # ceiling
+                            ceil_exists = any(v.get('type') == 'ceiling' for v in objects.values())
+                            if ceil_exists:
+                                print("    ❌ Ya hay un objeto tipo techo. Elimínalo primero (opción 3).")
+                                continue
+                            if suelo_z is None:
+                                print("    ⚠️  Calibra el suelo primero.")
+                                continue
+                            data = self._calibrate_techo(suelo_z)
+                            techo_z = data['z_mm']
+
+                        objects[name] = data
+                        print(f"\n    ✅ '{name}' añadido ({data.get('type', '?')})")
+                    except (KeyboardInterrupt, SystemExit):
+                        print("\n    ⚠️  Calibración de objeto cancelada.")
+                        continue
+
+                # -- Opción 2: Ver objetos --
+                elif choice == '2':
+                    print()
+                    if not objects:
+                        print("    (sin objetos calibrados)")
+                    else:
+                        for i, (name, obj) in enumerate(objects.items(), 1):
+                            otype = obj.get('type', '?')
+                            if otype == 'floor':
+                                detail = f"Z = {obj.get('z_mm', '?'):.1f} mm"
+                            elif otype == 'ceiling':
+                                detail = f"Z = {obj.get('z_mm', '?'):.1f} mm"
+                            elif otype == 'box':
+                                p1 = obj.get('corner1_mm', [0, 0, 0])
+                                p2 = obj.get('corner2_mm', [0, 0, 0])
+                                detail = f"esquinas [{p1[0]:.0f},{p1[1]:.0f}] -> [{p2[0]:.0f},{p2[1]:.0f}], h={obj.get('height_mm', 0):.0f}mm"
+                            elif otype == 'pole':
+                                b = obj.get('bottom_mm', [0, 0, 0])
+                                detail = f"base=[{b[0]:.0f},{b[1]:.0f},{b[2]:.0f}], w={obj.get('width_mm', 0):.0f}mm"
+                            elif otype == 'wall':
+                                p1 = obj.get('point1_mm', [0, 0, 0])
+                                p2 = obj.get('point2_mm', [0, 0, 0])
+                                detail = f"[{p1[0]:.0f},{p1[1]:.0f}] -> [{p2[0]:.0f},{p2[1]:.0f}]"
+                            else:
+                                detail = str(obj)
+                            print(f"    {i}. {name} ({otype}): {detail}")
+                    if place_position:
+                        print(f"\n    Place position: [{place_position[0]:.4f}, {place_position[1]:.4f}, {place_position[2]:.4f}] m")
+
+                # -- Opción 3: Eliminar objeto --
+                elif choice == '3':
+                    if not objects:
+                        print("    (sin objetos para eliminar)")
+                        continue
+                    print()
+                    items = list(objects.items())
+                    for i, (name, obj) in enumerate(items, 1):
+                        print(f"    {i}. {name} ({obj.get('type', '?')})")
+                    sel = input("    Número a eliminar (ENTER para cancelar): ").strip()
+                    if not sel:
+                        continue
+                    try:
+                        idx = int(sel) - 1
+                        if 0 <= idx < len(items):
+                            name_del, obj_del = items[idx]
+                            # Verificar dependencias: no eliminar floor/ceiling si hay walls/poles
+                            obj_type = obj_del.get('type')
+                            if obj_type == 'floor':
+                                has_walls_poles = any(
+                                    v.get('type') in ('wall', 'pole') for v in objects.values()
+                                )
+                                if has_walls_poles:
+                                    print("    ❌ No se puede eliminar el suelo mientras haya paredes o postes.")
+                                    continue
+                                suelo_z = None
+                            elif obj_type == 'ceiling':
+                                has_poles = any(v.get('type') == 'pole' for v in objects.values())
+                                if has_poles:
+                                    print("    ❌ No se puede eliminar el techo mientras haya postes.")
+                                    continue
+                                has_walls = any(v.get('type') == 'wall' for v in objects.values())
+                                if has_walls:
+                                    print("    ❌ No se puede eliminar el techo mientras haya paredes.")
+                                    continue
+                                techo_z = None
+                            del objects[name_del]
+                            print(f"    ✅ '{name_del}' eliminado.")
+                        else:
+                            print("    ⚠️  Número fuera de rango.")
+                    except ValueError:
+                        print("    ⚠️  Entrada inválida.")
+
+                # -- Opción 4: Place position --
+                elif choice == '4':
+                    boxes = [(name, obj) for name, obj in objects.items() if obj.get('type') == 'box']
+                    if boxes:
+                        print()
+                        print("    Objetos tipo caja disponibles:")
+                        for i, (name, _) in enumerate(boxes, 1):
+                            print(f"    {i}. {name}")
+                        sel = input("    ¿Cuál es la superficie de depósito? (número): ").strip()
+                        try:
+                            idx = int(sel) - 1
+                            if 0 <= idx < len(boxes):
+                                chosen_name, chosen_obj = boxes[idx]
+                                place_position = derive_place_position(
+                                    chosen_obj['corner1_mm'],
+                                    chosen_obj['corner2_mm'],
+                                    chosen_obj.get('height_mm', 0),
+                                    offset_mm=20.0
+                                )
+                                print(f"\n    ✅ Place position calculada de '{chosen_name}':")
+                                print(f"       [{place_position[0]:.4f}, {place_position[1]:.4f}, {place_position[2]:.4f}] m")
+                            else:
+                                print("    ⚠️  Número fuera de rango.")
+                        except (ValueError, KeyError) as e:
+                            print(f"    ⚠️  Error: {e}")
+                    else:
+                        # Captura manual
+                        print()
+                        print("    No hay cajas calibradas. Captura manual con TCP:")
+                        try:
+                            tcp = self._wait_enter("Mueve el TCP a la posición de depósito y ENTER...")
+                            place_position = [tcp[0] / 1000.0, tcp[1] / 1000.0, tcp[2] / 1000.0]
+                            print(f"\n    ✅ Place position capturada:")
+                            print(f"       [{place_position[0]:.4f}, {place_position[1]:.4f}, {place_position[2]:.4f}] m")
+                        except Exception as e:
+                            print(f"    ❌ Error capturando TCP: {e}")
+
+                # -- Opción 5: Guardar y salir --
+                elif choice == '5':
+                    config = {
+                        'status': 'calibrated',
+                        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'units': 'mm',
+                        'objects': objects,
+                    }
+                    if place_position:
+                        config['place_position_m'] = place_position
+                        config['place_position_note'] = 'Posición de depósito en METROS.'
+
+                    # Validar
+                    is_valid, errs = validate_config(config)
+                    if not is_valid:
+                        print("\n    ❌ Validación fallida:")
+                        for e in errs:
+                            print(f"       - {e}")
+                        print("    Añade los objetos necesarios antes de guardar.")
+                        continue
+
+                    # Guardar (atomic)
+                    os.makedirs(os.path.dirname(config_path) if os.path.dirname(config_path) else '.', exist_ok=True)
+                    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(os.path.abspath(config_path)),
+                                                     suffix='.tmp', delete=False) as f:
+                        json.dump(config, f, indent=2)
+                        tmp_path = f.name
+                    os.rename(tmp_path, config_path)
+
+                    # Resumen
+                    print()
+                    print("    ╔═════════════════════════════════════════════════╗")
+                    print("    ║           CALIBRACIÓN COMPLETADA ✅             ║")
+                    print("    ╚═════════════════════════════════════════════════╝")
+                    print()
+                    print(f"    Archivo: {config_path}")
+                    print(f"    Timestamp: {config['timestamp']}")
+                    print()
+                    print("    Objetos calibrados:")
+                    for obj_name, obj in objects.items():
+                        otype = obj.get('type', '?')
+                        if otype in ('floor', 'ceiling'):
+                            print(f"      • {obj_name}: Z = {obj['z_mm']:.1f} mm")
+                        elif otype == 'box':
+                            print(f"      • {obj_name}: caja")
+                        elif otype == 'pole':
+                            print(f"      • {obj_name}: poste")
+                        elif otype == 'wall':
+                            print(f"      • {obj_name}: pared")
+                    if place_position:
+                        print(f"\n    Place position (m): {place_position}")
+                    print()
+                    raise SystemExit(0)
+
+                else:
+                    print("    ⚠️  Opción inválida. Usa 1-5.")
 
         except KeyboardInterrupt:
             print("\n\n    ⚠️  Calibración interrumpida — NO se guardó ningún archivo.")
