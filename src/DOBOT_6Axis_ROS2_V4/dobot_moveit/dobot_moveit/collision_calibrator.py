@@ -168,6 +168,119 @@ def derive_place_position(p1_mm, p2_mm, height_mm, offset_mm=20.0):
     return [cx / 1000.0, cy / 1000.0, (z_top + offset_mm) / 1000.0]
 
 
+def estimate_n_layers(z_top_detection_mm, z_pallet_surface_mm, box_height_mm):
+    """Estimate the number of box layers on the pallet.
+
+    Uses YOLO cam_z_mm (smaller = closer to camera = TOP of stack) and the
+    pallet surface Z in robot frame to compute the layer count.
+
+    Args:
+        z_top_detection_mm: cam_z_mm of the topmost detection (mm, camera frame).
+                            Smaller value = closer to camera = higher stack.
+        z_pallet_surface_mm: Z of the empty pallet surface in robot frame (mm).
+                             Typically negative (below base_link origin).
+        box_height_mm: Height of each box/layer (mm). Must be > 0.
+
+    Returns:
+        int >= 0 — number of layers detected. 0 means nothing or bad input.
+
+    Raises:
+        ValueError: if box_height_mm <= 0.
+    """
+    if box_height_mm <= 0:
+        raise ValueError(f"box_height_mm must be > 0, got {box_height_mm}")
+
+    # Convert cam_z detection to robot Z using the relationship:
+    # The pallet surface calibration gives us z_pallet_surface_mm in robot frame.
+    # The cam_z_mm is depth from camera: larger value = farther = lower in scene.
+    # However, the relationship between cam_z_mm and robot Z is captured by the
+    # calibration plane. Here we work purely in robot-frame Z difference:
+    # robot_z_top_surface ≈ z_pallet_surface_mm + (n_layers * box_height_mm)
+    # We estimate n_layers from the detection Z difference.
+    # Note: z_top_detection_mm here is expected in robot frame (robot_z_grasp * 1000).
+    z_diff_mm = z_top_detection_mm - z_pallet_surface_mm
+    if z_diff_mm <= 0:
+        return 0
+
+    n = round(z_diff_mm / box_height_mm)
+    return max(0, n)
+
+
+def compute_layer_slabs(pallet_surface_z_mm, box_height_mm, n_layers,
+                        pallet_dx_mm, pallet_dy_mm,
+                        pallet_cx_mm, pallet_cy_mm,
+                        safety_margin_mm=5.0):
+    """Generate collision slab descriptors for all layers BELOW the active top layer.
+
+    The top layer (layer N) has NO slab — that is where the robot picks.
+    Layers 1 through N-1 (bottom to second-from-top) each get one slab.
+
+    Args:
+        pallet_surface_z_mm: Z of the empty pallet surface in robot frame (mm).
+        box_height_mm:        Height of each layer/box (mm).
+        n_layers:             Total number of layers currently on the pallet.
+        pallet_dx_mm:         Pallet width X (mm).
+        pallet_dy_mm:         Pallet width Y (mm).
+        pallet_cx_mm:         Pallet center X in robot frame (mm).
+        pallet_cy_mm:         Pallet center Y in robot frame (mm).
+        safety_margin_mm:     Vertical safety gap between slab top and active layer (mm).
+
+    Returns:
+        list of dict — one per slab (bottom to second-from-top), each dict:
+            {
+                'name':      str  — 'pallet_capa_N' (1-indexed from bottom),
+                'center_m':  [cx, cy, cz] in metres,
+                'dims_m':    [dx, dy, dz] in metres,
+                'layer_idx': int  — 1-indexed layer number from bottom,
+            }
+        Returns [] if n_layers <= 1 (no lower layers to protect).
+    """
+    if n_layers <= 1:
+        return []
+
+    slabs = []
+    for layer_idx in range(1, n_layers):  # layers 1..N-1 (exclude active top N)
+        z_bottom_mm = pallet_surface_z_mm + (layer_idx - 1) * box_height_mm
+        z_top_mm    = z_bottom_mm + box_height_mm - safety_margin_mm
+        z_center_mm = (z_bottom_mm + z_top_mm) / 2.0
+        dz_mm       = z_top_mm - z_bottom_mm
+
+        slabs.append({
+            'name':      f'pallet_capa_{layer_idx}',
+            'center_m':  [pallet_cx_mm / 1000.0,
+                          pallet_cy_mm / 1000.0,
+                          z_center_mm  / 1000.0],
+            'dims_m':    [pallet_dx_mm / 1000.0,
+                          pallet_dy_mm / 1000.0,
+                          max(dz_mm, 1.0) / 1000.0],  # at least 1mm thick
+            'layer_idx': layer_idx,
+        })
+    return slabs
+
+
+def should_remove_top_layer(current_z_robot_mm, previous_z_robot_mm,
+                            box_height_mm, threshold_factor=0.7):
+    """Determine if the top pallet layer has been cleared (robot Z dropped).
+
+    When all boxes on the current top layer are picked, the next YOLO detection
+    will show a lower Z (the next layer down). We detect this by comparing the
+    current stable Z against the previous one.
+
+    Args:
+        current_z_robot_mm:  Current stable grasp Z in robot frame (mm).
+        previous_z_robot_mm: Previous stable grasp Z in robot frame (mm).
+        box_height_mm:       Height of each layer/box (mm).
+        threshold_factor:    Fraction of box_height to trigger removal (0.7 default).
+                             0.7 accounts for D435i depth noise (±40mm at 2m).
+
+    Returns:
+        True if the Z dropped more than threshold_factor * box_height_mm.
+    """
+    z_drop_mm = previous_z_robot_mm - current_z_robot_mm
+    threshold_mm = threshold_factor * box_height_mm
+    return z_drop_mm >= threshold_mm
+
+
 def validate_config(config):
     """Validate a collision config dictionary.
 
