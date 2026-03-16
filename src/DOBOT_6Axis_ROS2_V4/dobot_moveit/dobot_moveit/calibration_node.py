@@ -146,10 +146,10 @@ class CalibrationNode(Node):
         z_pred = A @ params
         err = np.abs(z_pred - z)
 
-        print(f"\n    Ajuste plano Z {label}:")
+        self.get_logger().info(f"Ajuste plano Z {label}:")
         for k in range(len(pts_xyz)):
-            print(f"      P{k}: z={z[k]:.1f}  z_fit={z_pred[k]:.1f}  err={err[k]:.1f}mm")
-        print(f"      Error máximo: {err.max():.1f}mm | RMS: {np.sqrt(np.mean(err**2)):.1f}mm")
+            self.get_logger().info(f"  P{k}: z={z[k]:.1f}  z_fit={z_pred[k]:.1f}  err={err[k]:.1f}mm")
+        self.get_logger().info(f"  Error máximo: {err.max():.1f}mm | RMS: {np.sqrt(np.mean(err**2)):.1f}mm")
 
         return {'a': float(a), 'b': float(b), 'c': float(c)}
 
@@ -250,11 +250,11 @@ class CalibrationNode(Node):
 
     def calculate_and_save(self):
         self.clear_screen()
-        print("\n    === Calculando calibración ===\n")
+        self.get_logger().info("Calculando calibración")
 
         n = len(self.calibration_points)
         if n < 3:
-            print("    ❌ Necesitas mínimo 3 puntos")
+            self.get_logger().error("Necesitas mínimo 3 puntos")
             return
 
         # --- XY affine ---
@@ -302,8 +302,8 @@ class CalibrationNode(Node):
         with open(path, 'w') as f:
             json.dump(config, f, indent=2)
 
-        print(f"\n    ✅ Guardado: {path}")
-        print(f"    ✅ z_work_mm_fallback: {z_work_mm:.1f} mm")
+        self.get_logger().info(f"Guardado: {path}")
+        self.get_logger().info(f"z_work_mm_fallback: {z_work_mm:.1f} mm")
         self.wait_enter("ENTER para continuar...")
 
 
