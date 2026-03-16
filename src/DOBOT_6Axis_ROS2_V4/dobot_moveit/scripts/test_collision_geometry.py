@@ -24,6 +24,9 @@ from collision_calibrator import (
     wall_box,
     derive_place_position,
     validate_config,
+    estimate_n_layers,
+    compute_layer_slabs,
+    should_remove_top_layer,
 )
 
 # ---------------------------------------------------------------------------
@@ -277,6 +280,115 @@ def test_validate_config_two_floors():
     record('validate_config_two_floors', ok, detail)
 
 
+# ─────────────────────────────────────────────────────────────────
+# Tests: estimate_n_layers
+# ─────────────────────────────────────────────────────────────────
+
+def test_estimate_n_layers_3_layers():
+    """Test 18: estimate_n_layers with 3 layers."""
+    # pallet_surface=-500, top_detection=-200 → z_diff=300, box_h=100 → 3
+    n = estimate_n_layers(-200.0, -500.0, 100.0)
+    ok = n == 3
+    record('estimate_n_layers_3_layers', ok,
+           f'expected 3, got {n}')
+
+
+def test_estimate_n_layers_1_layer():
+    """Test 19: estimate_n_layers with 1 layer."""
+    # pallet_surface=-500, top=-400 → z_diff=100, box_h=100 → 1
+    n = estimate_n_layers(-400.0, -500.0, 100.0)
+    ok = n == 1
+    record('estimate_n_layers_1_layer', ok,
+           f'expected 1, got {n}')
+
+
+def test_estimate_n_layers_0():
+    """Test 20: estimate_n_layers with 0 layers."""
+    # top == surface → z_diff=0 → 0
+    n = estimate_n_layers(-500.0, -500.0, 100.0)
+    ok = n == 0
+    record('estimate_n_layers_0', ok,
+           f'expected 0, got {n}')
+
+
+# ─────────────────────────────────────────────────────────────────
+# Tests: compute_layer_slabs
+# ─────────────────────────────────────────────────────────────────
+
+def test_compute_slabs_3_layers():
+    """Test 21: compute_layer_slabs with 3 layers."""
+    # 3 layers → 2 slabs (capa_1 and capa_2, not the active top capa_3)
+    slabs = compute_layer_slabs(
+        pallet_surface_z_mm=-500.0,
+        box_height_mm=100.0,
+        n_layers=3,
+        pallet_dx_mm=600.0,
+        pallet_dy_mm=400.0,
+        pallet_cx_mm=0.0,
+        pallet_cy_mm=0.0,
+        safety_margin_mm=5.0,
+    )
+    ok = len(slabs) == 2
+    record('compute_slabs_3_layers_count', ok,
+           f'expected 2 slabs, got {len(slabs)}')
+
+    if ok:
+        # Check slab 1 (bottom layer)
+        s1 = slabs[0]
+        ok2 = s1['name'] == 'pallet_capa_1' and s1['layer_idx'] == 1
+        record('compute_slabs_3_layers_names', ok2,
+               f'slab0: name={s1["name"]}, idx={s1["layer_idx"]}')
+
+        # Check dims XY (600mm × 400mm → 0.6m × 0.4m)
+        ok3 = close(s1['dims_m'][0], 0.6) and close(s1['dims_m'][1], 0.4)
+        record('compute_slabs_3_layers_dims_xy', ok3,
+               f'dims_m={s1["dims_m"][:2]} expected [0.6, 0.4]')
+
+
+def test_compute_slabs_1_layer():
+    """Test 22: compute_layer_slabs with 1 layer."""
+    # 1 layer → 0 slabs (nothing to protect below)
+    slabs = compute_layer_slabs(-500.0, 100.0, 1, 600.0, 400.0, 0.0, 0.0)
+    ok = len(slabs) == 0
+    record('compute_slabs_1_layer', ok,
+           f'expected 0 slabs, got {len(slabs)}')
+
+
+def test_compute_slabs_safety_margin():
+    """Test 23: compute_layer_slabs respects safety margin."""
+    # Verify that slab height = box_height - safety_margin
+    slabs = compute_layer_slabs(-500.0, 100.0, 2, 600.0, 400.0, 0.0, 0.0,
+                                 safety_margin_mm=5.0)
+    ok = len(slabs) == 1
+    record('compute_slabs_safety_margin_count', ok, f'expected 1, got {len(slabs)}')
+    if ok:
+        # dz should be (100 - 5) mm = 95mm = 0.095m
+        dz = slabs[0]['dims_m'][2]
+        ok2 = close(dz, 0.095)
+        record('compute_slabs_safety_margin_dz', ok2,
+               f'expected dz=0.095m, got {dz:.4f}m')
+
+
+# ─────────────────────────────────────────────────────────────────
+# Tests: should_remove_top_layer
+# ─────────────────────────────────────────────────────────────────
+
+def test_should_remove_layer_true():
+    """Test 24: should_remove_top_layer returns True for large drop."""
+    # Drop 100mm with box_height=100 → 100 >= 0.7*100=70 → True
+    result = should_remove_top_layer(-300.0, -200.0, 100.0)
+    record('should_remove_layer_true', result is True,
+           f'expected True, got {result}')
+
+
+def test_should_remove_layer_false():
+    """Test 25: should_remove_top_layer returns False for small drop."""
+    # Drop 20mm with box_height=100 → 20 < 70 → False
+    result = should_remove_top_layer(-220.0, -200.0, 100.0)
+    record('should_remove_layer_false', result is False,
+           f'expected False, got {result}')
+
+
 # ===========================================================================
 # Runner
 # ===========================================================================
@@ -302,6 +414,14 @@ def main():
         test_validate_config_no_floor,    # 15
         test_validate_config_no_ceiling,  # 16
         test_validate_config_two_floors,  # 17
+        test_estimate_n_layers_3_layers,  # 18
+        test_estimate_n_layers_1_layer,   # 19
+        test_estimate_n_layers_0,         # 20
+        test_compute_slabs_3_layers,      # 21
+        test_compute_slabs_1_layer,       # 22
+        test_compute_slabs_safety_margin, # 23
+        test_should_remove_layer_true,    # 24
+        test_should_remove_layer_false,   # 25
     ]
 
     for test_fn in tests:
