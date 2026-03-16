@@ -22,7 +22,9 @@ from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import JointState
 from moveit_msgs.msg import MoveItErrorCodes
 from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import Constraints, PositionConstraint, OrientationConstraint, JointConstraint
+from moveit_msgs.msg import (Constraints, PositionConstraint, OrientationConstraint,
+                              JointConstraint, CollisionObject, PlanningScene)
+from moveit_msgs.srv import ApplyPlanningScene
 from geometry_msgs.msg import Pose
 from shape_msgs.msg import SolidPrimitive
 
@@ -154,6 +156,38 @@ class DepalletizerNode(Node):
         self.do_instant_client = self.create_client(
             DOInstantSrv, 'dobot_bringup_ros2/srv/DOInstant',
             callback_group=self.cb_group)
+
+        # ── Pallet collision slabs client ─────────────────────────
+        self._apply_scene_client = self.create_client(
+            ApplyPlanningScene, '/apply_planning_scene',
+            callback_group=self.cb_group)
+
+        # ── Pallet config (loaded from collision_config.json) ─────
+        self._pallet_config = None
+        self._pallet_z_surface_robot_mm = None
+        self._box_height_mm = None
+        self._layer_slabs = []           # list of slab names currently active
+        self._current_n_layers = 0
+
+        _coll_cfg_path = os.path.expanduser('~/dobot_ws/collision_config.json')
+        if os.path.exists(_coll_cfg_path):
+            try:
+                with open(_coll_cfg_path, 'r') as _f:
+                    _cc = json.load(_f)
+                _objs = _cc.get('objects', {})
+                _pallet_obj = _objs.get('pallet')
+                if _pallet_obj and _pallet_obj.get('type') == 'pallet':
+                    self._pallet_config = _pallet_obj
+                    # Compute pallet surface Z in robot frame (avg of corner Z values)
+                    _p1 = _pallet_obj.get('corner1_mm', [0, 0, 0])
+                    _p2 = _pallet_obj.get('corner2_mm', [0, 0, 0])
+                    self._pallet_z_surface_robot_mm = (_p1[2] + _p2[2]) / 2.0
+                    self.get_logger().info(
+                        f'✅ Pallet calibrado encontrado: superficie Z={self._pallet_z_surface_robot_mm:.1f}mm')
+                else:
+                    self.get_logger().info('ℹ️ No hay pallet calibrado en collision_config — sin losas dinámicas')
+            except Exception as _e:
+                self.get_logger().warn(f'⚠️ Error leyendo pallet config: {_e}')
 
         # ── UI thread ────────────────────────────────────────
         self.ui_thread = threading.Thread(target=self.user_interface)
@@ -290,6 +324,138 @@ class DepalletizerNode(Node):
         """Run pre-flight checks. Must be called AFTER executor is spinning."""
         if not self._wait_for_valid_joint_states(timeout_sec=15.0):
             self.get_logger().error('⚠️ Timeout esperando joint states válidos — continuar con precaución')
+
+    # ─────────────────────────────────────────────────────────
+    # MoveIt planning scene helpers
+    # ─────────────────────────────────────────────────────────
+    def _create_collision_box(self, name, dims_m, center_m, add=True):
+        """Add or remove a box collision object in the MoveIt planning scene."""
+        co = CollisionObject()
+        co.id = name
+        co.header.frame_id = 'base_link'
+
+        if add:
+            box = SolidPrimitive()
+            box.type = SolidPrimitive.BOX
+            box.dimensions = [float(dims_m[0]), float(dims_m[1]), float(dims_m[2])]
+
+            pose = Pose()
+            pose.position.x = float(center_m[0])
+            pose.position.y = float(center_m[1])
+            pose.position.z = float(center_m[2])
+            pose.orientation.w = 1.0
+
+            co.primitives.append(box)
+            co.primitive_poses.append(pose)
+            co.operation = CollisionObject.ADD
+        else:
+            co.operation = CollisionObject.REMOVE
+
+        ps = PlanningScene()
+        ps.is_diff = True
+        ps.world.collision_objects.append(co)
+
+        if not self._apply_scene_client.service_is_ready():
+            self.get_logger().warn(f'⚠️ /apply_planning_scene no disponible — skip {name}')
+            return
+
+        req = ApplyPlanningScene.Request()
+        req.scene = ps
+        future = self._apply_scene_client.call_async(req)
+        _ev = threading.Event()
+        future.add_done_callback(lambda f: _ev.set())
+        if not _ev.wait(timeout=5.0):
+            self.get_logger().warn(f'⚠️ Timeout al aplicar escena para {name}')
+
+    def _remove_collision_object(self, name):
+        """Remove a collision object from MoveIt planning scene."""
+        self._create_collision_box(name, [0, 0, 0], [0, 0, 0], add=False)
+
+    def _initialize_pallet_slabs(self, box_height_mm):
+        """Initialize layer collision slabs based on current YOLO detections."""
+        from dobot_moveit.collision_calibrator import (
+            estimate_n_layers, compute_layer_slabs
+        )
+
+        if self._pallet_config is None:
+            return
+
+        self._box_height_mm = box_height_mm
+        p1 = self._pallet_config.get('corner1_mm', [0, 0, 0])
+        p2 = self._pallet_config.get('corner2_mm', [0, 0, 0])
+        pallet_dx_mm = abs(p2[0] - p1[0])
+        pallet_dy_mm = abs(p2[1] - p1[1])
+        pallet_cx_mm = (p1[0] + p2[0]) / 2.0
+        pallet_cy_mm = (p1[1] + p2[1]) / 2.0
+
+        # Wait for first stable Z detection
+        self.get_logger().info('⏳ Esperando primera detección YOLO para estimar capas...')
+        z_top_robot_mm = None
+        t0 = time.time()
+        while time.time() - t0 < 15.0:
+            with self.detection_lock:
+                if self.detections:
+                    z_values = [d.get('robot_z_grasp') for d in self.detections
+                                if d.get('robot_z_grasp') is not None]
+                    if z_values:
+                        # Use maximum Z (highest in robot frame = top layer)
+                        z_top_robot_mm = max(z_values) * 1000.0  # m→mm
+                        break
+            time.sleep(0.2)
+
+        if z_top_robot_mm is None:
+            self.get_logger().warn('⚠️ Sin detecciones YOLO para estimar capas — iniciando sin losas')
+            return
+
+        n_layers = estimate_n_layers(
+            z_top_robot_mm,
+            self._pallet_z_surface_robot_mm,
+            box_height_mm
+        )
+
+        if n_layers <= 0:
+            self.get_logger().warn(f'⚠️ N_layers={n_layers} (inválido) — sin losas')
+            return
+
+        # Ask user confirmation
+        print(f'\n    📦 Se detectaron {n_layers} capa(s) en el pallet.')
+        confirm = input(f'    ¿Es correcto? (s/N): ').strip().lower()
+        if confirm not in ('s', 'si', 'sí', 'y', 'yes'):
+            new_n = input(f'    Ingresa el número de capas manualmente: ').strip()
+            try:
+                n_layers = max(1, int(new_n))
+            except ValueError:
+                self.get_logger().warn('⚠️ Entrada inválida — usando valor detectado')
+
+        # Create N-1 slabs (all layers below the active top)
+        slabs = compute_layer_slabs(
+            pallet_surface_z_mm=self._pallet_z_surface_robot_mm,
+            box_height_mm=box_height_mm,
+            n_layers=n_layers,
+            pallet_dx_mm=pallet_dx_mm,
+            pallet_dy_mm=pallet_dy_mm,
+            pallet_cx_mm=pallet_cx_mm,
+            pallet_cy_mm=pallet_cy_mm,
+            safety_margin_mm=5.0,
+        )
+
+        self._current_n_layers = n_layers
+        self._layer_slabs = []
+
+        for slab in slabs:
+            self._create_collision_box(slab['name'], slab['dims_m'], slab['center_m'], add=True)
+            self._layer_slabs.append(slab['name'])
+            self.get_logger().info(
+                f'🧱 Losa añadida: {slab["name"]} | '
+                f'Z={slab["center_m"][2]*1000:.0f}mm | '
+                f'dims=({slab["dims_m"][0]*1000:.0f}×{slab["dims_m"][1]*1000:.0f}×{slab["dims_m"][2]*1000:.0f}mm)')
+
+        if slabs:
+            self.get_logger().info(
+                f'✅ {len(slabs)} losas de colisión creadas para {n_layers} capas de pallet')
+        else:
+            self.get_logger().info(
+                f'ℹ️ Pallet con 1 capa — sin losas necesarias (el brazo trabaja en la capa superior)')
 
     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
@@ -644,6 +810,29 @@ class DepalletizerNode(Node):
     # ─────────────────────────────────────────────────────────
     def user_interface(self):
         time.sleep(2.0)
+
+        # ── Pallet layer height prompt (if pallet calibrated) ──
+        if self._pallet_config is not None:
+            print()
+            print('    ╔═══════════════════════════════════════════════╗')
+            print('    ║  CONFIGURACIÓN DE CAPAS DE PALLET            ║')
+            print('    ╚═══════════════════════════════════════════════╝')
+            print()
+            while True:
+                try:
+                    h_str = input('    ¿Cuánto mide de alto la caja en mm? (ej: 100): ').strip()
+                    h = float(h_str)
+                    if h <= 0:
+                        print('    ⚠️ El valor debe ser mayor que 0.')
+                        continue
+                    break
+                except ValueError:
+                    print('    ⚠️ Ingresa un número válido.')
+            self.get_logger().info(f'📦 Altura de caja configurada: {h:.1f}mm')
+            # Initialize slabs in a background thread to not block UI
+            threading.Thread(target=self._initialize_pallet_slabs, args=(h,),
+                             daemon=True).start()
+
         self.print_menu()
         while self.running:
             try:
