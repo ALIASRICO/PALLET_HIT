@@ -6,21 +6,21 @@ namespace parseTool
 
     std::string parserenableRobotRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::EnableRobot::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "EnableRobot()";
         return ss.str();
     }
     std::string parserdisableRobotRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::DisableRobot::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "DisableRobot()";
         return ss.str();
     }
     std::string parserclearErrorRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::ClearError::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "ClearError()";
         return ss.str();
@@ -45,7 +45,7 @@ namespace parseTool
     }
     std::string parserrobotModeRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::RobotMode::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "RobotMode()";
         return ss.str();
@@ -139,7 +139,7 @@ namespace parseTool
     }
     std::string parserpowerOnRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::PowerOn::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;  // PowerOn()
         ss << "PowerOn()";
         return ss.str();
@@ -152,21 +152,21 @@ namespace parseTool
     }
     std::string parserstopRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::Stop::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;  // Stop()
         ss << "Stop()";
         return ss.str();
     }
     std::string parserpauseRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::Pause::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;  // Pause()
         ss << "Pause()";
         return ss.str();
     }
     std::string parserContinueRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::Continue::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;  // Continue()
         ss << "Continue()";
         return ss.str();
@@ -230,7 +230,7 @@ namespace parseTool
     }
     std::string parserGetAngleRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::GetAngle::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "GetAngle()";
         return ss.str();
@@ -323,7 +323,7 @@ namespace parseTool
     }
     std::string parserGetErrorIDRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::GetErrorID::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "GetErrorID()";
         return ss.str();
@@ -384,14 +384,14 @@ namespace parseTool
     }
     std::string parserstartDragRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::StartDrag::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "StartDrag()";
         return ss.str();
     }
     std::string parserStopDragRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::StopDrag::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "StopDrag()";
         return ss.str();
@@ -723,7 +723,7 @@ namespace parseTool
 
     std::string parserStopMoveJogRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::StopMoveJog::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::string stringOrder = "MoveJog()";
 
         return stringOrder;
@@ -828,7 +828,7 @@ namespace parseTool
     }
     std::string parserGetCurrentCommandIdRequest2String(const std::shared_ptr<dobot_msgs_v4::srv::GetCurrentCommandId::Request> request)
     {
-        std::ignore = request; // 明确地忽略参数
+        std::ignore = request; // Explicitly ignore unused parameter
         std::stringstream ss;
         ss << "GetCurrentCommandID()";
         return ss.str();

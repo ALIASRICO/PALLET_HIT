@@ -11,7 +11,7 @@ void CRRobotRos2::init()
     std::string robotNodeName{""};
     int robotNumber = 1;
 
-    // 获取参数 dobot_bringup_ros2.launch.py
+    // get parameters dobot_bringup_ros2.launch.py
     this->declare_parameter("robot_ip_address", "192.168.1.6");
     this->declare_parameter("robot_type", "cr5");
     this->declare_parameter("trajectory_duration", 0.3);
@@ -289,7 +289,7 @@ void CRRobotRos2::pubFeedBackInfo()
 {
     std::shared_ptr<RealTimeData> realTimeData;
 
-    // 设置发布频率为100Hz
+    // set publish rate to 100Hz
     rclcpp::Rate rate(100);
 
     while (rclcpp::ok())
@@ -312,7 +312,7 @@ void CRRobotRos2::pubFeedBackInfo()
         root["i_robot"] = realTimeData->i_robot;
         root["program_state"] = realTimeData->program_state;
         root["safety_status"] = realTimeData->safety_status;
-        std::vector<double> vecTransit; // vector 中转存取数组类型
+        std::vector<double> vecTransit; // vector intermediate storage for array type
         for (int i = 0; i < 3; i++)
         {
             vecTransit.push_back(realTimeData->tool_accelerometer_values[i]);
@@ -521,7 +521,7 @@ void CRRobotRos2::pubFeedBackInfo()
         root["tool"] = vecTransit;
         vecTransit.clear();
 
-        root["TraceIndex"] = realTimeData->TraceIndex; // 1296 ~ 1303 轨迹复现索引 （未实现）
+        root["TraceIndex"] = realTimeData->TraceIndex; // 1296 ~ 1303 trajectory replay index (not implemented)
 
         for (int i = 0; i < 6; i++)
         {
@@ -543,7 +543,7 @@ void CRRobotRos2::pubFeedBackInfo()
         }
         root["ActualQuaternion"] = vecTransit;
         vecTransit.clear();
-        root["AutoManualMode"] = realTimeData->AutoManualMode; // 1416 ~ 1417 手自动模式 0: 未开启 1: manual 2:auto
+        root["AutoManualMode"] = realTimeData->AutoManualMode; // 1416 ~ 1417 manual/auto mode 0: disabled 1: manual 2: auto
         std::string feedBackVecStr = root.dump();
 
         std_msgs::msg::String msgFeedInfo;
@@ -569,10 +569,10 @@ void CRRobotRos2::goalHandle()
 void CRRobotRos2::getErrorID(std::vector<int> &vec)
 {
     std::ignore = vec;
-    // 创建服务客户端
+    // create service client
     std::string name = kRobotName + "/dobot_bringup_ros2/srv/GeterrorID";
     kClientGeterror = this->create_client<dobot_msgs_v4::srv::GetErrorID>(name);
-    // 创建请求消息
+    // create request message
     auto request = std::make_shared<dobot_msgs_v4::srv::GetErrorID::Request>();
 
     while (!kClientGeterror->service_is_ready())

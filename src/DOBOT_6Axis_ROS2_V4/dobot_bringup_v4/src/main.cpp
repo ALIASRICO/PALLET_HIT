@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
   rclcpp::init(argc, argv);
   auto robot = std::make_shared<CRRobotRos2>();
 
-  // 创建关节状态消息和发布者
+  // Create joint state message and publisher
   sensor_msgs::msg::JointState joint_state_msg;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub = robot->create_publisher<sensor_msgs::msg::JointState>("joint_states_robot", 10);
   joint_state_msg.name = {"joint1", "joint2", "joint3", "joint4", "joint5", "joint6"};
@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
   double position[6];
   while (rclcpp::ok())
   {
-    // 获取关节状态并发布消息
+    // Get joint states and publish message
     robot->getJointState(position);
     joint_state_msg.header.stamp = robot->get_clock()->now();
     joint_state_msg.header.frame_id = "dummy_link";
@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
     rate.sleep();
   }
 
-  // 关闭 ROS 2 环境
+  // Shutdown ROS 2 environment
   rclcpp::shutdown();
   return 0;
 }

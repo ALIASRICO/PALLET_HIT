@@ -138,12 +138,12 @@ void CRCommanderRos2::doTcpCmd(std::shared_ptr<TcpClient> &tcp, const char *cmd,
 
             recv_ptr = recv_ptr + strlen(recv_ptr);
         }
-        for (int i = 0; i < 2000;i++)  //赋值
+        for (int i = 0; i < 2000;i++)  // assign value
         {
             if (recv_ptr[i] == '{')
             {
-                std::string str(recv_ptr); // 将char*类型转为string类型
-                std::string result = str.substr(0, i-1); // 使用substr函数截取指定长度的子字符串
+                std::string str(recv_ptr); // convert char* to string
+                std::string result = str.substr(0, i-1); // use substr to extract substring of specified length
                 int num = stringToInt(result);
                 err_id = num;
                 std::cout << "ErrorID: " << result<< std::endl;
@@ -189,12 +189,12 @@ void CRCommanderRos2::doTcpCmd_f(std::shared_ptr<TcpClient> &tcp, const char *cm
             recv_ptr = recv_ptr + strlen(recv_ptr);
         }
         int pose1 = 0;
-        for (int i = 0; i < 2000;i++)  //赋值
+        for (int i = 0; i < 2000;i++)  // assign value
         {
             if (recv_ptr[i] == '{')
             {
-                std::string str(recv_ptr); // 将char*类型转为string类型
-                std::string result = str.substr(0, i-1); // 使用substr函数截取指定长度的子字符串
+                std::string str(recv_ptr); // convert char* to string
+                std::string result = str.substr(0, i-1); // use substr to extract substring of specified length
                 int num = stringToInt(result);
                 err_id = num;
                 std::cout << "ErrorID: " << num<< std::endl;
@@ -202,8 +202,8 @@ void CRCommanderRos2::doTcpCmd_f(std::shared_ptr<TcpClient> &tcp, const char *cm
             }
             if (recv_ptr[i] == '}')
             {
-                std::string str(recv_ptr); // 将char*类型转为string类型
-                std::string result = str.substr(pose1, i-pose1+1); // 使用substr函数截取指定长度的子字符串
+                std::string str(recv_ptr); // convert char* to string
+                std::string result = str.substr(pose1, i-pose1+1); // use substr to extract substring of specified length
                 mode_id = result;
                 break;
             }
