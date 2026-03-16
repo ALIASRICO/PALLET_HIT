@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 ================================================================
-Detector YOLO para Jugos - Despaletizador
+Detector YOLO OBB para Kartonger (Cajas) - Despaletizador
 ================================================================
-Detecta jugos de caja usando YOLOv8 y cámara RealSense D435i.
+Detecta cajas usando YOLOv8L-OBB y cámara RealSense D435i.
 Publica las posiciones en coordenadas de cámara (mm).
 
 Publica:
-  - /detections/jugos (Float32MultiArray) - [id, x_mm, y_mm, z_mm, conf, w_px, h_px, juice_type]
+  - /detections/kartonger (Float32MultiArray) - [id, x_mm, y_mm, z_mm, conf, w_px, h_px, angle_rad] x N
   - /detections/image (Image) - Imagen con detecciones dibujadas
+
+Modelo: kartonger_best.pt (1 clase: "box", OBB)
 ================================================================
 """
 
@@ -18,16 +20,11 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 import os
+import math
 
 from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-import math
-from dobot_camera.juice_logic import (
-    associate_cara_f_with_hit,
-    JUICE_TYPE_MANGO, JUICE_TYPE_MORA, JUICE_TYPE_UNKNOWN,
-    CLASS_ID_CARA_F, CLASS_ID_HIT_MANGO, CLASS_ID_HIT_MORA,
-)
 
 # YOLO
 try:
@@ -38,30 +35,38 @@ except ImportError:
     print("⚠️ ultralytics no instalado: pip install ultralytics")
 
 
-class YOLOJuiceDetector(Node):
+class YOLOKartongerDetector(Node):
+    """Detector de cajas (kartonger) con YOLOv8 OBB."""
+
+    # Campos por detección en el mensaje publicado
+    FIELDS_PER_DETECTION = 8  # id, x_mm, y_mm, z_mm, conf, w_px, h_px, angle_rad
+
     def __init__(self):
-        super().__init__('yolo_juice_detector')
-        
+        super().__init__('yolo_kartonger_detector')
+
         self.get_logger().info('=' * 50)
-        self.get_logger().info('  DETECTOR YOLO - JUGOS DE CAJA')
+        self.get_logger().info('  DETECTOR YOLO OBB - KARTONGER (CAJAS)')
         self.get_logger().info('=' * 50)
 
-        # Parámetros
-        self.declare_parameter('model_path', os.path.expanduser('/home/iudc/dobot_ws/yolo_training/models/jugos_best.pt'))
+        # ── Parámetros ──
+        self.declare_parameter(
+            'model_path',
+            os.path.expanduser('/home/iudc/dobot_ws/yolo_training/models/kartonger_best.pt'),
+        )
         self.declare_parameter('confidence', 0.5)
         self.declare_parameter('show_window', True)
-        
+
         self.model_path = self.get_parameter('model_path').value
         self.confidence = self.get_parameter('confidence').value
         self.show_window = self.get_parameter('show_window').value
 
-        # Configuración cámara
+        # ── Configuración cámara ──
         self.WIDTH = 640
         self.HEIGHT = 480
-        self.MIN_DEPTH = 0.3
+        self.MIN_DEPTH = 0.3  # metros
         self.MAX_DEPTH = 3.0
 
-        # Cargar modelo YOLO
+        # ── Cargar modelo YOLO ──
         self.model = None
         if YOLO_AVAILABLE:
             if os.path.exists(self.model_path):
@@ -69,13 +74,10 @@ class YOLOJuiceDetector(Node):
                 self.get_logger().info(f'✅ Modelo cargado: {self.model_path}')
             else:
                 self.get_logger().error(f'❌ Modelo no encontrado: {self.model_path}')
-                # Intentar modelo genérico
-                self.model = YOLO('yolov8n.pt')
-                self.get_logger().warn('⚠️ Usando modelo genérico yolov8n.pt')
         else:
             self.get_logger().error('❌ YOLO no disponible')
 
-        # Inicializar RealSense
+        # ── Inicializar RealSense ──
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         self.config.enable_stream(rs.stream.depth, self.WIDTH, self.HEIGHT, rs.format.z16, 30)
@@ -91,62 +93,78 @@ class YOLOJuiceDetector(Node):
         try:
             self.profile = self.pipeline.start(self.config)
             self.get_logger().info('✅ Cámara RealSense iniciada')
-            
-            # Warmup
-            for _ in range(30):
-                self.pipeline.wait_for_frames()
-            
+
+            # Warmup con reintentos
+            import time
+            warmup_ok = 0
+            for attempt in range(60):
+                try:
+                    self.pipeline.wait_for_frames(timeout_ms=2000)
+                    warmup_ok += 1
+                    if warmup_ok >= 15:
+                        break
+                except RuntimeError:
+                    self.get_logger().info(f'   Esperando cámara... ({attempt+1})')
+                    time.sleep(0.5)
+
+            if warmup_ok < 5:
+                raise RuntimeError('Cámara no responde después de warmup')
+
             # Obtener intrínsecos
-            frames = self.pipeline.wait_for_frames()
+            frames = self.pipeline.wait_for_frames(timeout_ms=10000)
             aligned = self.align.process(frames)
             color_frame = aligned.get_color_frame()
             self.intrinsics = color_frame.profile.as_video_stream_profile().intrinsics
-            
+            self.get_logger().info('✅ Intrínsecos obtenidos')
+
         except Exception as e:
             self.get_logger().error(f'❌ Error iniciando cámara: {e}')
             raise
 
-        # Publicadores
+        # ── Publicadores ──
         self.detections_pub = self.create_publisher(
-            Float32MultiArray,
-            '/detections/jugos',
-            10
+            Float32MultiArray, '/detections/kartonger', 10
         )
-        
+
         self.bridge = CvBridge()
         self.image_pub = self.create_publisher(
-            Image,
-            '/detections/image',
-            10
+            Image, '/detections/image', 10
         )
 
-        # Ventana
+        # ── Ventana ──
         if self.show_window:
-            cv2.namedWindow('YOLO - Detección de Jugos', cv2.WINDOW_AUTOSIZE)
+            cv2.namedWindow('YOLO OBB - Detección de Cajas', cv2.WINDOW_AUTOSIZE)
 
-        # Timer principal
+        # ── Timer principal ──
         self.timer = self.create_timer(0.05, self.detect_loop)  # 20 FPS
-        
-        self.get_logger().info('✅ Detector iniciado')
-        self.get_logger().info('   Topic: /detections/jugos')
 
+        self.get_logger().info('✅ Detector kartonger iniciado')
+        self.get_logger().info('   Topic: /detections/kartonger')
+        self.get_logger().info('   Formato: [id, x_mm, y_mm, z_mm, conf, w_px, h_px, angle_rad]')
+
+    # ──────────────────────────────────────────────
+    #  Profundidad
+    # ──────────────────────────────────────────────
     def get_depth_at_point(self, depth_frame, cx, cy, radius=3):
-        """Obtiene profundidad promedio en un área"""
+        """Obtiene profundidad mediana en un área cuadrada."""
         depths = []
-        for dy in range(-radius, radius+1):
-            for dx in range(-radius, radius+1):
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
                 x = max(0, min(cx + dx, self.WIDTH - 1))
                 y = max(0, min(cy + dy, self.HEIGHT - 1))
                 d = depth_frame.get_distance(x, y)
                 if self.MIN_DEPTH < d < self.MAX_DEPTH:
                     depths.append(d)
-        
+
         if len(depths) >= 3:
             return float(np.median(depths))
         return 0.0
 
+    # ──────────────────────────────────────────────
+    #  Bucle principal
+    # ──────────────────────────────────────────────
     def detect_loop(self):
-        """Bucle principal de detección"""
+        """Detecta cajas y publica posiciones 3D + ángulo."""
         if self.model is None:
             return
 
@@ -160,7 +178,7 @@ class YOLOJuiceDetector(Node):
             if not depth_frame or not color_frame:
                 return
 
-            # Aplicar filtros
+            # Filtros de profundidad
             depth_filtered = self.spatial_filter.process(depth_frame)
             depth_filtered = self.temporal_filter.process(depth_filtered)
             depth_filtered = self.hole_filter.process(depth_filtered)
@@ -170,29 +188,25 @@ class YOLOJuiceDetector(Node):
             color_image = np.asanyarray(color_frame.get_data())
             display = color_image.copy()
 
-            # Detectar con YOLO
+            # ── Detección YOLO OBB ──
             results = self.model.predict(
                 source=color_image,
                 conf=self.confidence,
-                verbose=False
+                verbose=False,
             )
 
-            # Procesar detecciones
             detections_data = []
 
             if len(results) > 0 and results[0].obb is not None and len(results[0].obb) > 0:
-                cara_f_raw = []   # cara_F dets (class_id==2): pick targets
-                hit_raw = []      # HIT dets (class_id==0,1): juice type labels
-
-                for obb in results[0].obb:
+                for det_id, obb in enumerate(results[0].obb):
+                    # Extraer OBB: centro, tamaño, ángulo
                     xywhr = obb.xywhr[0].cpu().numpy()
-                    cx_f, cy_f, w_f, h_f, angle = xywhr
+                    cx_f, cy_f, w_f, h_f, angle_rad = xywhr
                     cx_px = int(cx_f)
                     cy_px = int(cy_f)
                     conf = float(obb.conf)
-                    cls_id = int(obb.cls)
 
-                    # Depth + 3D projection (unchanged pipeline)
+                    # Profundidad → coordenadas 3D
                     z = self.get_depth_at_point(depth_frame, cx_px, cy_px)
                     if z <= 0:
                         continue
@@ -200,111 +214,64 @@ class YOLOJuiceDetector(Node):
                     point = rs.rs2_deproject_pixel_to_point(
                         self.intrinsics,
                         [float(cx_px), float(cy_px)],
-                        z
+                        z,
                     )
-                    x_mm = point[0] * 1000
-                    y_mm = point[1] * 1000
-                    z_mm = z * 1000
+                    x_mm = point[0] * 1000.0
+                    y_mm = point[1] * 1000.0
+                    z_mm = z * 1000.0
 
-                    # Draw ALL detections for visualization
-                    if cls_id == CLASS_ID_CARA_F:
-                        vis_color = (0, 255, 0)    # Green
-                        vis_label = f'cara_F ({conf:.0%})'
-                    elif cls_id == CLASS_ID_HIT_MANGO:
-                        vis_color = (0, 165, 255)  # Orange
-                        vis_label = f'MANGO ({conf:.0%})'
-                    else:
-                        vis_color = (255, 0, 255)  # Magenta
-                        vis_label = f'MORA ({conf:.0%})'
-
-                    # Draw OBB rotated rectangle
-                    angle_deg = math.degrees(angle)
-                    rect = ((cx_f, cy_f), (w_f, h_f), angle_deg)
-                    box_pts = cv2.boxPoints(rect)
-                    box_pts = box_pts.astype(int)
-                    cv2.polylines(display, [box_pts], True, vis_color, 2)
-                    cv2.circle(display, (cx_px, cy_px), 5, (0, 0, 255), -1)
-                    cv2.putText(display, vis_label, (cx_px, cy_px - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, vis_color, 2)
-                    cv2.putText(display, f'Z:{z_mm:.0f}mm', (cx_px, cy_px + 15),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, vis_color, 1)
-
-                    det_dict = {
-                        'cx': cx_f, 'cy': cy_f,
-                        'x_mm': x_mm, 'y_mm': y_mm, 'z_mm': z_mm,
-                        'conf': conf, 'w_px': w_f, 'h_px': h_f,
-                        'class_id': cls_id,
-                    }
-                    if cls_id == CLASS_ID_CARA_F:
-                        cara_f_raw.append(det_dict)
-                    elif cls_id in (CLASS_ID_HIT_MANGO, CLASS_ID_HIT_MORA):
-                        hit_raw.append(det_dict)
-
-                # Associate cara_F with juice type (primary pick targets)
-                cara_f_associated = associate_cara_f_with_hit(cara_f_raw, hit_raw)
-
-                # Fallback: use HIT detections that have no nearby cara_F as pick targets
-                # Find which HITs were already "used" by a cara_F association
-                associated_hit_positions = set()
-                for det in cara_f_associated:
-                    if det['juice_type'] != JUICE_TYPE_UNKNOWN:
-                        for hit in hit_raw:
-                            dx = det['cx'] - hit['cx']
-                            dy = det['cy'] - hit['cy']
-                            if (dx*dx + dy*dy) <= 150.0**2:
-                                associated_hit_positions.add(id(hit))
-
-                # HIT detections with no associated cara_F become pick targets themselves
-                hit_fallback = []
-                for hit in hit_raw:
-                    if id(hit) not in associated_hit_positions:
-                        jt = JUICE_TYPE_MANGO if hit['class_id'] == CLASS_ID_HIT_MANGO else JUICE_TYPE_MORA
-                        hit_fallback.append({**hit, 'juice_type': jt})
-
-                # Combine: cara_F first (preferred), then HIT fallbacks
-                all_pick_targets = cara_f_associated + hit_fallback
-
-                # Build 8-field output: [id, x_mm, y_mm, z_mm, conf, w_px, h_px, juice_type]
-                for pub_id, det in enumerate(all_pick_targets):
-                    juice_type = det['juice_type']
-                    if juice_type == JUICE_TYPE_MANGO:
-                        overlay_color = (0, 255, 0)    # Green
-                        type_label = 'MANGO'
-                    elif juice_type == JUICE_TYPE_MORA:
-                        overlay_color = (255, 0, 128)  # Purple
-                        type_label = 'MORA'
-                    else:
-                        overlay_color = (0, 255, 255)  # Yellow
-                        type_label = '???'
-
-                    cx_px2 = int(det['cx'])
-                    cy_px2 = int(det['cy'])
-                    src_label = '(cara_F)' if pub_id < len(cara_f_associated) else '(hit)'
-                    cv2.putText(display, f'{type_label} #{pub_id} {src_label}',
-                                (cx_px2, cy_px2 - 25),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, overlay_color, 2)
-
+                    # ── Publicar ──
                     detections_data.extend([
-                        float(pub_id),       # ID
-                        det['x_mm'],         # X cam mm
-                        det['y_mm'],         # Y cam mm
-                        det['z_mm'],         # Z cam mm (depth)
-                        det['conf'],         # Confidence
-                        float(det['w_px']),  # Width px
-                        float(det['h_px']),  # Height px
-                        juice_type,          # 0.0=MANGO, 1.0=MORA, -1.0=UNKNOWN
+                        float(det_id),     # ID
+                        x_mm,              # X cámara (mm)
+                        y_mm,              # Y cámara (mm)
+                        z_mm,              # Z cámara / profundidad (mm)
+                        conf,              # Confianza
+                        float(w_f),        # Ancho OBB (px)
+                        float(h_f),        # Alto OBB (px)
+                        float(angle_rad),  # Ángulo rotación (rad)
                     ])
 
-            # Publicar detecciones
+                    # ── Visualización ──
+                    angle_deg = math.degrees(angle_rad)
+                    color_box = (0, 255, 0)  # Verde
+
+                    # Dibujar OBB rotado
+                    rect = ((cx_f, cy_f), (w_f, h_f), angle_deg)
+                    box_pts = cv2.boxPoints(rect).astype(int)
+                    cv2.polylines(display, [box_pts], True, color_box, 2)
+
+                    # Centro
+                    cv2.circle(display, (cx_px, cy_px), 4, (0, 0, 255), -1)
+
+                    # Etiquetas
+                    cv2.putText(
+                        display,
+                        f'box #{det_id} ({conf:.0%})',
+                        (cx_px, cy_px - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_box, 2,
+                    )
+                    cv2.putText(
+                        display,
+                        f'Z:{z_mm:.0f}mm  ang:{angle_deg:.1f}°',
+                        (cx_px, cy_px + 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color_box, 1,
+                    )
+
+            # ── Publicar detecciones ──
             if detections_data:
                 msg = Float32MultiArray()
                 msg.data = detections_data
                 self.detections_pub.publish(msg)
-                
+
             # Info en pantalla
-            num_detections = len(detections_data) // 8
-            cv2.putText(display, f'Jugos detectados: {num_detections}', (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            num_det = len(detections_data) // self.FIELDS_PER_DETECTION
+            cv2.putText(
+                display,
+                f'Cajas detectadas: {num_det}',
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2,
+            )
 
             # Publicar imagen
             img_msg = self.bridge.cv2_to_imgmsg(display, encoding='bgr8')
@@ -312,28 +279,28 @@ class YOLOJuiceDetector(Node):
 
             # Mostrar ventana
             if self.show_window:
-                cv2.imshow('YOLO - Detección de Jugos', display)
+                cv2.imshow('YOLO OBB - Detección de Cajas', display)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     self.get_logger().info('Cerrando...')
                     rclpy.shutdown()
 
         except Exception as e:
-            self.get_logger().error(f'Error: {e}')
+            self.get_logger().error(f'Error en detect_loop: {e}')
 
     def destroy_node(self):
         cv2.destroyAllWindows()
         try:
             self.pipeline.stop()
         except Exception as e:
-            self.get_logger().warning(f"Error stopping pipeline: {e}")
+            self.get_logger().warning(f'Error stopping pipeline: {e}')
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     try:
-        node = YOLOJuiceDetector()
+        node = YOLOKartongerDetector()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass

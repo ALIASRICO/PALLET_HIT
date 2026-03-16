@@ -34,9 +34,13 @@ def generate_launch_description():
         package='dobot_moveit',
         executable='action_move_server',
         name='dobot_action_server',
-        output='screen'
+        output='screen',
+        env={
+            'DOBOT_TYPE': os.getenv('DOBOT_TYPE', 'cr20'),
+            'IP_address': os.getenv('IP_address', '192.168.5.1'),
+        }
     )
-    
+        
     # Scene Manager (carga objetos de colisión)
     scene_manager = Node(
         package='dobot_moveit',

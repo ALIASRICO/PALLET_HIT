@@ -5,7 +5,7 @@
   "objects": {
     "suelo": {
       "type": "floor",
-      "z_mm": -504.65179443359375
+      "z_mm": -650.0
     },
     "techo": {
       "type": "ceiling",
@@ -23,7 +23,7 @@
         156.11521911621094,
         220.27976989746094
       ],
-      "height_mm": 720.0
+      "height_mm": 0
     },
     "camara_soporte": {
       "type": "pole",
@@ -32,7 +32,8 @@
         1102.3037109375,
         908.1385498046875
       ],
-      "width_mm": 200.0
+      "width_mm": 80.0,
+      "height_mm": 228.0
     },
     "pared": {
       "type": "wall",
@@ -49,10 +50,10 @@
       "thickness_mm": 100
     }
   },
-  "place_position_m": [
+ "place_position_m": [
     1.030895263671875,
     0.34874178314208987,
-    0.24028318786621095
+    0.350
   ],
   "place_position_note": "Centro de cinta_transportadora + 20mm offset Z. En METROS."
 }
