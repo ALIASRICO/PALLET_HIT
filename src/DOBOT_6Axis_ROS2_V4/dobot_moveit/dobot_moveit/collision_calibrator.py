@@ -169,14 +169,14 @@ def derive_place_position(p1_mm, p2_mm, height_mm, offset_mm=20.0):
 
 
 def validate_config(config):
-    """Validate a complete collision config dictionary.
+    """Validate a collision config dictionary.
 
     Checks:
         - 'objects' key exists
-        - All 7 expected object keys are present:
-          mesa, cinta, poste_camara, pared_izq, pared_der
+        - Exactly ONE object has type='floor'
+        - Exactly ONE object has type='ceiling'
         - ceiling_z > floor_z
-        - place_position_m has exactly 3 elements
+        - place_position_m has exactly 3 elements (if present)
 
     Args:
         config: dict — the collision calibration config.
@@ -186,34 +186,37 @@ def validate_config(config):
     """
     errors = []
 
-    expected_objects = [
-        'suelo',
-        'techo',
-        'mesa_trabajo',
-        'pallet_jugos',
-        'cinta_transportadora',
-        'camara_soporte',
-        'pared',
-    ]
-
     if 'objects' not in config:
         errors.append("Missing 'objects' key in config")
-    else:
-        for key in expected_objects:
-            if key not in config['objects']:
-                errors.append(f"Missing object key: '{key}'")
+        return (False, errors)
 
-    # ceiling_z > floor_z
     objects = config.get('objects', {})
-    techo = objects.get('techo', {})
-    suelo = objects.get('suelo', {})
-    ceiling_z = techo.get('z_mm')
-    floor_z = suelo.get('z_mm')
-    if ceiling_z is not None and floor_z is not None:
-        if ceiling_z <= floor_z:
-            errors.append(
-                f"ceiling_z ({ceiling_z}) must be greater than floor_z ({floor_z})"
-            )
+
+    # Find floor and ceiling objects by type
+    floor_objects = [(name, obj) for name, obj in objects.items() if obj.get('type') == 'floor']
+    ceiling_objects = [(name, obj) for name, obj in objects.items() if obj.get('type') == 'ceiling']
+
+    if len(floor_objects) == 0:
+        errors.append("No floor-type object found (required: exactly 1)")
+    elif len(floor_objects) > 1:
+        names = [n for n, _ in floor_objects]
+        errors.append(f"Multiple floor-type objects found: {names} (required: exactly 1)")
+
+    if len(ceiling_objects) == 0:
+        errors.append("No ceiling-type object found (required: exactly 1)")
+    elif len(ceiling_objects) > 1:
+        names = [n for n, _ in ceiling_objects]
+        errors.append(f"Multiple ceiling-type objects found: {names} (required: exactly 1)")
+
+    # Check ceiling_z > floor_z only if we have exactly one of each
+    if len(floor_objects) == 1 and len(ceiling_objects) == 1:
+        floor_z = floor_objects[0][1].get('z_mm')
+        ceiling_z = ceiling_objects[0][1].get('z_mm')
+        if floor_z is not None and ceiling_z is not None:
+            if ceiling_z <= floor_z:
+                errors.append(
+                    f"ceiling_z ({ceiling_z}) must be greater than floor_z ({floor_z})"
+                )
 
     # place_position_m
     place = config.get('place_position_m')

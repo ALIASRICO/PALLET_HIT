@@ -161,16 +161,12 @@ def test_mm_to_m_conversion():
 
 
 def test_validate_config_valid():
-    """Test 9: validate_config with a complete valid config."""
+    """Test 9: validate_config with custom object names (dynamic)."""
     config = {
         'objects': {
-            'suelo':                {'z_mm': -510},
-            'techo':                {'z_mm': 800},
-            'mesa_trabajo':         {'corner1_mm': [300, 800, -500], 'corner2_mm': [700, 1200, -500], 'height_mm': 200},
-            'pallet_jugos':         {'corner1_mm': [400, 800, -505], 'corner2_mm': [700, 1100, -505], 'height_mm': 150},
-            'cinta_transportadora': {'corner1_mm': [400, -500, -300], 'corner2_mm': [600, -300, -300], 'height_mm': 100},
-            'camara_soporte':       {'bottom_mm': [500, 1000, 200], 'width_mm': 80},
-            'pared':                {'point1_mm': [0, 0, 0], 'point2_mm': [1000, 0, 0]},
+            'piso':   {'type': 'floor',   'z_mm': -600},
+            'cielo':  {'type': 'ceiling', 'z_mm': 1200},
+            'mesa':   {'type': 'box', 'corner1_mm': [300, 800, -500], 'corner2_mm': [700, 1200, -500], 'height_mm': 200},
         },
         'place_position_m': [0.5, -0.4, -0.28],
     }
@@ -184,13 +180,8 @@ def test_validate_config_ceiling_below_floor():
     """Test 10: validate_config with ceiling_z < floor_z -> invalid."""
     config = {
         'objects': {
-            'suelo':                {'z_mm': 800},
-            'techo':                {'z_mm': -510},
-            'mesa_trabajo':         {},
-            'pallet_jugos':         {},
-            'cinta_transportadora': {},
-            'camara_soporte':       {},
-            'pared':                {},
+            'suelo': {'type': 'floor',   'z_mm': 800},
+            'techo': {'type': 'ceiling', 'z_mm': -510},
         },
         'place_position_m': [0.5, -0.4, -0.28],
     }
@@ -243,6 +234,49 @@ def test_pole_box_narrow():
         record('pole_box_narrow', True, f'ValueError: {e}')
 
 
+def test_validate_config_no_floor():
+    """Test 15: validate_config rejects config with no floor-type object."""
+    config = {
+        'objects': {
+            'techo': {'type': 'ceiling', 'z_mm': 800},
+            'mesa':  {'type': 'box'},
+        },
+    }
+    is_valid, errors = validate_config(config)
+    ok = not is_valid and any('floor' in e for e in errors)
+    detail = f'is_valid={is_valid}, errors={errors}'
+    record('validate_config_no_floor', ok, detail)
+
+
+def test_validate_config_no_ceiling():
+    """Test 16: validate_config rejects config with no ceiling-type object."""
+    config = {
+        'objects': {
+            'suelo': {'type': 'floor', 'z_mm': -510},
+            'mesa':  {'type': 'box'},
+        },
+    }
+    is_valid, errors = validate_config(config)
+    ok = not is_valid and any('ceiling' in e for e in errors)
+    detail = f'is_valid={is_valid}, errors={errors}'
+    record('validate_config_no_ceiling', ok, detail)
+
+
+def test_validate_config_two_floors():
+    """Test 17: validate_config rejects config with 2 floor-type objects."""
+    config = {
+        'objects': {
+            'piso1': {'type': 'floor',   'z_mm': -510},
+            'piso2': {'type': 'floor',   'z_mm': -600},
+            'techo': {'type': 'ceiling', 'z_mm': 800},
+        },
+    }
+    is_valid, errors = validate_config(config)
+    ok = not is_valid and any('Multiple floor' in e for e in errors)
+    detail = f'is_valid={is_valid}, errors={errors}'
+    record('validate_config_two_floors', ok, detail)
+
+
 # ===========================================================================
 # Runner
 # ===========================================================================
@@ -265,6 +299,9 @@ def main():
         test_wall_box_angled,             # 12
         test_wall_box_too_short,          # 13
         test_pole_box_narrow,             # 14
+        test_validate_config_no_floor,    # 15
+        test_validate_config_no_ceiling,  # 16
+        test_validate_config_two_floors,  # 17
     ]
 
     for test_fn in tests:
