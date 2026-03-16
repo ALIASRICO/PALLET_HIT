@@ -46,20 +46,20 @@ def rpy_to_quaternion(roll_deg, pitch_deg, yaw_deg):
 
 
 # ── Orientación fija del TCP ──────────────────────────────────────────────────
-TCP_FIXED_QUAT = rpy_to_quaternion(177.0, -0.38, 0.53)
+TCP_FIXED_QUAT = rpy_to_quaternion(180.0, 0.0, 0.0)
 
 ORI_TOL_ROLL  = 0.05
 ORI_TOL_PITCH = 0.05
-ORI_TOL_YAW   = 0.05
+ORI_TOL_YAW   = 0.03
 
 # ── Home Position (joint-space, degrees → radians) ────────────────────────────
-HOME_JOINT_DEG = [0, -30, 90, 0, -60, 0]   # arm folded forward/down, below ceiling
+HOME_JOINT_DEG = [90, 0, -90, 0, 90, 0]  # arm folded forward/down, below ceiling
 HOME_JOINT_RAD = [math.radians(d) for d in HOME_JOINT_DEG]
 
 JUICE_TYPE_MANGO   = 0.0
 JUICE_TYPE_MORA    = 1.0
 JUICE_TYPE_UNKNOWN = -1.0
-
+    
 
 class DepalletizerNode(Node):
     def __init__(self):
@@ -75,8 +75,8 @@ class DepalletizerNode(Node):
         self.calibration_file  = os.path.expanduser('~/dobot_ws/calibration_config.json')
         self.z_approach        = 0.15
         self.z_lift            = 0.20
-        self.z_pick_extra      = 0.00
-        self.speed_scaling     = 0.2
+        self.z_pick_extra      = 0.0
+        self.speed_scaling     = 0.03
         self.place_position    = [0.5, -0.4, 0.15]
 
         _collision_cfg = os.path.expanduser('~/dobot_ws/collision_config.json')
@@ -98,9 +98,9 @@ class DepalletizerNode(Node):
             self.get_logger().warn(
                 f'⚠️ No existe collision_config.json — place_position default: {self.place_position}')
 
-        self.top_offset_mm     = 20.0
+        self.top_offset_mm     = 0.0
         self.h_max_mm          = 400.0
-        self.xy_verify_tol_mm  = 15.0
+        self.xy_verify_tol_mm  = 30.0
 
         # ── Estado ───────────────────────────────────────────
         self.detections        = []
@@ -116,6 +116,7 @@ class DepalletizerNode(Node):
         self.juice_counts      = {JUICE_TYPE_MANGO: 0, JUICE_TYPE_MORA: 0, JUICE_TYPE_UNKNOWN: 0}
         self.current_joints    = None
         self._last_tcp         = None
+        self.z_layer           = None
 
         self.planning_group    = 'cr20_group'
         self.end_effector_link = 'Link6'
@@ -124,7 +125,7 @@ class DepalletizerNode(Node):
 
         # ── Suscriptores ─────────────────────────────────────
         self.create_subscription(
-            Float32MultiArray, '/detections/jugos',
+            Float32MultiArray, '/detections/kartonger',
             self.detections_callback, 10,
             callback_group=self.cb_group)
 
@@ -293,20 +294,24 @@ class DepalletizerNode(Node):
     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
     # ─────────────────────────────────────────────────────────
-    def move_to_pose(self, x, y, z, label=''):
+    def move_to_pose(self, x, y, z, label='', max_retries=3):
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
+                self.get_logger().warn(f'🔄 Reintento {attempt}/{max_retries}...')
+                time.sleep(1.0)
         tag = f'[{label}] ' if label else ''
         self.get_logger().info(f'📍 {tag}Moviendo a: ({x:.3f}, {y:.3f}, {z:.3f})m')
 
         if self.current_joints is not None:
             joints_str = ', '.join(f'{j:.3f}' for j in self.current_joints)
-            self.get_logger().debug(f'🔍 START_STATE准备: joints=[{joints_str}]')
+            self.get_logger().debug(f'🔍 START_STATE preparation: joints=[{joints_str}]')
         else:
             self.get_logger().warn('⚠️ DEBUG: current_joints es None antes de planificar!')
 
         goal = MoveGroup.Goal()
         goal.request.group_name                      = self.planning_group
-        goal.request.num_planning_attempts           = 20
-        goal.request.allowed_planning_time           = 10.0
+        goal.request.num_planning_attempts           = 50
+        goal.request.allowed_planning_time           = 30.0
         goal.request.max_velocity_scaling_factor     = self.speed_scaling
         goal.request.max_acceleration_scaling_factor = self.speed_scaling
 
@@ -399,6 +404,7 @@ class DepalletizerNode(Node):
         }
         desc = error_names.get(code, f'código {code}')
         self.get_logger().error(f'❌ MoveIt falló: {desc}')
+
         return False
 
     # ─────────────────────────────────────────────────────────
@@ -504,6 +510,33 @@ class DepalletizerNode(Node):
         return True
 
     # ─────────────────────────────────────────────────────────
+    # Z estabilizado
+    # ─────────────────────────────────────────────────────────
+    def get_stable_z_grasp(self, target_id, timeout_sec=3.0, n_frames=50):
+        """Toma la Z más alta de TODAS las detecciones (misma capa)."""
+        z_samples = []
+        t0 = time.time()
+        while len(z_samples) < n_frames and time.time() - t0 < timeout_sec:
+            with self.detection_lock:
+                if self.detections:
+                    for d in self.detections:
+                        z = d.get('robot_z_grasp')
+                        if z is not None and d.get('confidence', 0) >= 0.80:
+                            z_samples.append(z)
+            time.sleep(0.05)
+        
+        if not z_samples:
+            return None
+        
+        # Eliminar outliers — quedarse con el rango intercuartil
+        z_arr = sorted(z_samples)
+        result = z_arr[len(z_arr)//2]
+        self.get_logger().info(
+            f'📊 Z más alta seleccionada: {result:.4f}m ({len(z_samples)} muestras, '
+            f'rango: [{min(z_samples):.4f}, {max(z_samples):.4f}])')
+        return result
+
+    # ─────────────────────────────────────────────────────────
     # Ciclo pick & place
     # ─────────────────────────────────────────────────────────
     def pick_and_place_cycle(self):
@@ -518,7 +551,7 @@ class DepalletizerNode(Node):
             if not self.detections:
                 self.get_logger().warn('⚠️ Sin detecciones')
                 return False
-            Z_LAYER_TOL_MM = 15.0
+            Z_LAYER_TOL_MM = 5.0
             sorted_dets = sorted(self.detections, key=lambda d: d.get('cam_z_mm', 9999.0))
             best = sorted_dets[0]
             best_z = best.get('cam_z_mm', 0.0)
@@ -538,8 +571,17 @@ class DepalletizerNode(Node):
         try:
             x       = target['robot_x']
             y       = target['robot_y']
-            z_grasp = target['robot_z_grasp'] + self.z_pick_extra
-
+            if self.z_layer is not None:
+                z_grasp = self.z_layer + self.z_pick_extra
+                self.get_logger().info(f'📏 Usando Z de capa guardado: {self.z_layer:.4f}m')
+            else:
+                z_stable = self.get_stable_z_grasp(None, timeout_sec=3.0, n_frames=50)
+                if z_stable is not None:
+                 self.z_layer = z_stable
+                z_grasp = (z_stable if z_stable is not None else target['robot_z_grasp']) + self.z_pick_extra
+                self.get_logger().info(f'📏 Z de capa calculado: {z_grasp:.4f}m')
+            
+            self.get_logger().info(f'📊 z_grasp final usado: {z_grasp:.4f}m')
             self.get_logger().info('─' * 50)
             _juice_name = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
                            JUICE_TYPE_UNKNOWN: 'DESCONOCIDO'}.get(
@@ -550,34 +592,36 @@ class DepalletizerNode(Node):
                 f"h={target.get('h_obj_mm',0):.1f}mm | "
                 f"z_grasp={z_grasp:.3f}m")
             self.get_logger().info('─' * 50)
-
             # PICK
             self.get_logger().info('   Iniciando ciclo pick & place...')
-
-            if not self.move_to_pose(x, y, z_grasp + self.z_approach, label='APPROACH'):
+            self.speed_scaling = 0.1
+            z_approach_dynamic = 0.20  # 20cm fijo sobre z_grasp
+            if not self.move_to_pose(x, y, z_grasp + z_approach_dynamic, label='APPROACH'):
                 return False
             if not self.verify_xy(x, y):
                 return False
             if not self.move_to_pose(x, y, z_grasp, label='DESCENSO'):
                 return False
-            self.set_do1(1)  # ← vacío ON: robot en posición de agarre
-
-            if not self.move_to_pose(x, y, z_grasp + self.z_lift, label='LIFT'):
+            time.sleep(2)
+            self.set_do1(1)
+            time.sleep(1)
+            self.speed_scaling = 0.1
+            if not self.move_to_pose(x, y, z_grasp + z_approach_dynamic, label='LIFT'):
                 return False
-
             # PLACE
             px, py, pz = self.place_position
-
-            if not self.move_to_pose(px, py, pz + 0.1, label='PLACE APPROACH'):
+            z_place_approach = 0.20
+            if not self.move_to_pose(px, py, pz + z_place_approach, label='PLACE APPROACH'):
                 return False
             if not self.move_to_pose(px, py, pz, label='PLACE'):
                 return False
-            self.set_do1(0)  # ← vacío OFF: soltar en cinta transportadora
-
+            time.sleep(1)
+            self.set_do1(0)
+            time.sleep(1)
             self.get_logger().info('   En posición de depósito')
-
-            if not self.move_to_pose(px, py, pz + 0.1, label='PLACE LIFT'):
+            if not self.move_to_pose(px, py, pz + z_place_approach, label='PLACE LIFT'):
                 return False
+            self.speed_scaling = 0.1
 
             self.picked_count += 1
             _jt = target.get('juice_type', JUICE_TYPE_UNKNOWN)
@@ -634,16 +678,32 @@ class DepalletizerNode(Node):
 
     def show_detections(self):
         with self.detection_lock:
-            print(f'\n    Detecciones: {len(self.detections)}')
-            for d in self.detections:
-                if 'robot_x' in d:
-                    _jn = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
-                           JUICE_TYPE_UNKNOWN: '???'}.get(d.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
-                    print(
-                        f"    🧃 #{d['id']} [{_jn}] conf={d['confidence']:.2f} | "
-                        f"R=({d['robot_x']*1000:.0f},{d['robot_y']*1000:.0f})mm | "
-                        f"h={d.get('h_obj_mm',0):.1f}mm | "
-                        f"z_grasp={d.get('robot_z_grasp',0):.3f}m")
+            det_copy = [d.copy() for d in self.detections if 'robot_x' in d]
+        
+        print(f'\n    Detecciones: {len(det_copy)}')
+        if not det_copy:
+            return
+        
+        print('    ⏳ Recolectando muestras para Z de capa...')
+        z_layer = self.get_stable_z_grasp(None, timeout_sec=3.0, n_frames=50)
+        if z_layer is not None:
+            self.z_layer = z_layer
+            print(f'    📏 Z de capa (común): {z_layer:.3f}m  ← GUARDADO')
+        elif self.z_layer is not None:
+            z_layer = self.z_layer
+            print(f'    📏 Z de capa (guardado): {z_layer:.3f}m')
+
+        for d in det_copy:
+            _jn = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
+                JUICE_TYPE_UNKNOWN: '???'}.get(d.get('juice_type', JUICE_TYPE_UNKNOWN), '???')
+            z_instant = d.get('robot_z_grasp', 0)
+            z_show = z_layer if z_layer is not None else z_instant
+            print(
+                f"    🧃 #{d['id']} [{_jn}] conf={d['confidence']:.2f} | "
+                f"R=({d['robot_x']*1000:.0f},{d['robot_y']*1000:.0f})mm | "
+                f"h={d.get('h_obj_mm',0):.1f}mm | "
+                f"z_instant={z_instant:.3f}m | "
+                f"z_capa={z_show:.3f}m ✅")
 
     def destroy_node(self):
         self.get_logger().info('=' * 50)

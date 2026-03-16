@@ -17,5 +17,5 @@ def generate_launch_description():
     )
     ld.add_action(included_launch)
 
-    # 添加其他操作...
+    # Add other operations...
     return ld

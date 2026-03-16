@@ -7,7 +7,7 @@ cur_path = os.path.split(os.path.realpath(__file__))[0] + '/'
 cur_config_path = cur_path + '../config'
 cur_json_path = os.path.join(cur_config_path, 'param.json')
 
-# 读取 JSON 文件
+# Read JSON file
 with open(cur_json_path, 'r') as file:
     json_data = json.load(file)
 
