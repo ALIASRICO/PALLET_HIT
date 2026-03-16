@@ -90,11 +90,12 @@ class SceneManager(Node):
         objects = config.get('objects', {})
         
         # REMOVE existing objects first (prevent stale collision objects)
-        known_names = ['mesa_trabajo', 'pallet_jugos', 'cinta_transportadora',
-                       'camara_soporte', 'pared', 'suelo', 'techo',
-                       # legacy names from hardcoded fallback:
-                       'mesa_trabajo_hc', 'pallet_jugos_hc', 'banda_hc']
-        for name in known_names:
+        # Build list of names to remove: current config names + legacy fallback names
+        legacy_names = ['mesa_trabajo', 'pallet_jugos', 'cinta_transportadora',
+                        'camara_soporte', 'pared', 'suelo', 'techo',
+                        'mesa_trabajo_hc', 'pallet_jugos_hc', 'banda_hc']
+        names_to_remove = list(objects.keys()) + [n for n in legacy_names if n not in objects]
+        for name in names_to_remove:
             obj = CollisionObject()
             obj.id = name
             obj.header.frame_id = 'base_link'
@@ -129,19 +130,31 @@ class SceneManager(Node):
             elif obj_type == 'pole':
                 bottom = obj_data['bottom_mm']
                 width = obj_data['width_mm']
-                # Need techo_z for pole height — get from objects dict
-                techo_z_mm = objects.get('techo', {}).get('z_mm', 1000.0)
-                h_mm = techo_z_mm - bottom[2]
+                # Find ceiling by type (not by name)
+                def _find_by_type(objects_dict, type_str, default_z):
+                    for obj in objects_dict.values():
+                        if obj.get('type') == type_str:
+                            return obj.get('z_mm', default_z)
+                    return default_z
+                techo_z_mm = _find_by_type(objects, 'ceiling', 1000.0)
+                h_mm = obj_data.get('height_mm', techo_z_mm - bottom[2])
                 cx = bottom[0] / 1000.0
                 cy = bottom[1] / 1000.0
-                cz = (bottom[2] + techo_z_mm) / 2.0 / 1000.0
+                # Cuelga desde el techo hacia abajo
+                cz = (techo_z_mm - h_mm / 2.0) / 1000.0
                 co = self.create_box(obj_name, [width/1000.0, width/1000.0, h_mm/1000.0], [cx, cy, cz])
             elif obj_type == 'wall':
                 p1 = obj_data['point1_mm']
                 p2 = obj_data['point2_mm']
                 thickness = obj_data.get('thickness_mm', 100.0)
-                suelo_z_mm = objects.get('suelo', {}).get('z_mm', -600.0)
-                techo_z_mm = objects.get('techo', {}).get('z_mm', 1000.0)
+                # Find floor and ceiling by type (not by name)
+                def _find_by_type(objects_dict, type_str, default_z):
+                    for obj in objects_dict.values():
+                        if obj.get('type') == type_str:
+                            return obj.get('z_mm', default_z)
+                    return default_z
+                suelo_z_mm = _find_by_type(objects, 'floor', -600.0)
+                techo_z_mm = _find_by_type(objects, 'ceiling', 1000.0)
                 import math
                 dx = p2[0] - p1[0]
                 dy = p2[1] - p1[1]
