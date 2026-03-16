@@ -31,14 +31,14 @@ cr20_moveit/
 
 ## ⚙️ Archivos de Configuración
 
-| Archivo | Descripción |
-|---------|-------------|
-| `cr20_robot.srdf` | Define el grupo `cr20_group` (cadena `base_link` -> `Link6`), la posición named `home`, y las colisiones deshabilitadas entre links adyacentes |
-| `kinematics.yaml` | Solver KDL (`kdl_kinematics_plugin/KDLKinematicsPlugin`), timeout de 5 ms, resolución de búsqueda 0.005 |
-| `joint_limits.yaml` | Velocidad máxima 150 deg/s (joints 1-3) y 180 deg/s (joints 4-6); scaling por defecto al 10% |
-| `ros2_controllers.yaml` | `JointTrajectoryController` para los 6 joints con interfaz `position`; update rate 100 Hz |
-| `moveit_controllers.yaml` | Mapea el `cr20_group_controller` de ros2_control al action server de MoveIt2 |
-| `cr20_robot.ros2_control.xacro` | Declara las interfaces `position` (command) y `position`/`velocity` (state) para cada joint |
+| Archivo                           | Descripción                                                                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cr20_robot.srdf`               | Define el grupo `cr20_group` (cadena `base_link` -> `Link6`), la posición named `home`, y las colisiones deshabilitadas entre links adyacentes |
+| `kinematics.yaml`               | Solver KDL (`kdl_kinematics_plugin/KDLKinematicsPlugin`), timeout de 5 ms, resolución de búsqueda 0.005                                             |
+| `joint_limits.yaml`             | Velocidad máxima 150 deg/s (joints 1-3) y 180 deg/s (joints 4-6); scaling por defecto al 10%                                                           |
+| `ros2_controllers.yaml`         | `JointTrajectoryController` para los 6 joints con interfaz `position`; update rate 100 Hz                                                           |
+| `moveit_controllers.yaml`       | Mapea el `cr20_group_controller` de ros2_control al action server de MoveIt2                                                                          |
+| `cr20_robot.ros2_control.xacro` | Declara las interfaces `position` (command) y `position`/`velocity` (state) para cada joint                                                       |
 
 ## 🎯 Grupos de Planificación
 
@@ -46,13 +46,13 @@ cr20_moveit/
 
 Cadena cinemática completa del brazo:
 
-| Joint | Descripción |
-|-------|-------------|
-| `joint1` | Rotación base (yaw) |
-| `joint2` | Hombro |
-| `joint3` | Codo |
-| `joint4` | Muñeca 1 |
-| `joint5` | Muñeca 2 |
+| Joint      | Descripción                      |
+| ---------- | --------------------------------- |
+| `joint1` | Rotación base (yaw)              |
+| `joint2` | Hombro                            |
+| `joint3` | Codo                              |
+| `joint4` | Muñeca 1                         |
+| `joint5` | Muñeca 2                         |
 | `joint6` | Muñeca 3 (rotación herramienta) |
 
 **Posición named `home`:**
@@ -64,13 +64,13 @@ joint4=-0.104  joint5=1.631  joint6=0.0
 
 ## 🚀 Launch Files
 
-| Archivo | Qué hace |
-|---------|----------|
-| `real_robot.launch.py` | Lanza RSP + move_group + RViz + `scene_manager` + `action_move_server` (puente MoveIt -> Dobot) |
-| `demo.launch.py` | Demo completo sin robot real: move_group + RViz con fake controllers |
-| `moveit_gazebo.launch.py` | Integración con Gazebo: spawn del robot + controllers + move_group |
-| `move_group.launch.py` | Solo el nodo `move_group` (servidor MoveIt2) |
-| `rsp.launch.py` | `robot_state_publisher` con el URDF del CR20 |
+| Archivo                     | Qué hace                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------- |
+| `real_robot.launch.py`    | Lanza RSP + move_group + RViz +`scene_manager` + `action_move_server` (puente MoveIt -> Dobot) |
+| `demo.launch.py`          | Demo completo sin robot real: move_group + RViz con fake controllers                               |
+| `moveit_gazebo.launch.py` | Integración con Gazebo: spawn del robot + controllers + move_group                                |
+| `move_group.launch.py`    | Solo el nodo `move_group` (servidor MoveIt2)                                                     |
+| `rsp.launch.py`           | `robot_state_publisher` con el URDF del CR20                                                     |
 
 ## 🔧 Dependencias
 
