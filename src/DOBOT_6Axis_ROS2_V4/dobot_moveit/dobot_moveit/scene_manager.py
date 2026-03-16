@@ -127,6 +127,23 @@ class SceneManager(Node):
                 dy = abs(p2[1] - p1[1]) / 1000.0
                 dz = h / 1000.0
                 co = self.create_box(obj_name, [dx, dy, dz], [cx, cy, cz])
+            elif obj_type == 'pallet':
+                # Pallet base — same geometry as box but identified separately
+                # for dynamic layer slab management in depalletizer.
+                p1 = obj_data['corner1_mm']
+                p2 = obj_data['corner2_mm']
+                h = obj_data.get('height_mm', 0)
+                if h <= 0:
+                    # Zero-height pallet: just mark the surface, use minimal thickness
+                    h = 10  # 10mm minimal slab to be visible in MoveIt scene
+                cx = (p1[0] + p2[0]) / 2.0 / 1000.0
+                cy = (p1[1] + p2[1]) / 2.0 / 1000.0
+                z_surf = (p1[2] + p2[2]) / 2.0
+                cz = (z_surf - h / 2.0) / 1000.0
+                dx = abs(p2[0] - p1[0]) / 1000.0
+                dy = abs(p2[1] - p1[1]) / 1000.0
+                dz = h / 1000.0
+                co = self.create_box(obj_name, [dx, dy, dz], [cx, cy, cz])
             elif obj_type == 'pole':
                 bottom = obj_data['bottom_mm']
                 width = obj_data['width_mm']
