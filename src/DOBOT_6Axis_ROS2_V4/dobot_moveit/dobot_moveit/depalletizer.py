@@ -457,6 +457,57 @@ class DepalletizerNode(Node):
             self.get_logger().info(
                 f'ℹ️ Pallet con 1 capa — sin losas necesarias (el brazo trabaja en la capa superior)')
 
+    def _check_and_remove_layer(self, z_before_pick_robot_mm):
+        """After a successful pick, check if the top layer is now empty.
+
+        If the stable Z of current detections dropped by more than 0.7 * box_height,
+        remove the topmost collision slab (the layer we just cleared).
+
+        Args:
+            z_before_pick_robot_mm: Z of the pick target BEFORE the pick (in mm, robot frame).
+        """
+        from dobot_moveit.collision_calibrator import should_remove_top_layer
+
+        if self._box_height_mm is None or not self._layer_slabs:
+            return  # No slab management configured
+
+        # Get current stable Z from YOLO detections
+        z_samples = []
+        t0 = time.time()
+        while len(z_samples) < 20 and time.time() - t0 < 3.0:
+            with self.detection_lock:
+                for d in self.detections:
+                    z = d.get('robot_z_grasp')
+                    if z is not None and d.get('confidence', 0) >= 0.75:
+                        z_samples.append(z * 1000.0)  # m → mm
+            time.sleep(0.1)
+
+        if not z_samples:
+            # No detections — pallet may be empty
+            if self._layer_slabs:
+                self.get_logger().info(
+                    'Sin detecciones tras pick — pallet posiblemente vacio')
+            return
+
+        z_current_robot_mm = sorted(z_samples)[len(z_samples) // 2]  # median
+
+        if should_remove_top_layer(z_current_robot_mm, z_before_pick_robot_mm, self._box_height_mm):
+            if self._layer_slabs:
+                slab_to_remove = self._layer_slabs[-1]  # Remove topmost slab
+                self._remove_collision_object(slab_to_remove)
+                self._layer_slabs.pop()
+                self._current_n_layers = max(0, self._current_n_layers - 1)
+                self.z_layer = None  # Force Z recalculation for new layer
+                self.get_logger().info(
+                    f'Capa vaciada — losa "{slab_to_remove}" eliminada del planning scene '
+                    f'| Capas restantes: {self._current_n_layers}')
+
+        # Check if all detections gone
+        with self.detection_lock:
+            if not self.detections and not self._layer_slabs:
+                self.get_logger().info(
+                    'Pallet vacio — todas las capas completadas')
+
     # ─────────────────────────────────────────────────────────
     # MoveIt — orientación 100% fija
     # ─────────────────────────────────────────────────────────
@@ -748,6 +799,8 @@ class DepalletizerNode(Node):
                 self.get_logger().info(f'📏 Z de capa calculado: {z_grasp:.4f}m')
             
             self.get_logger().info(f'📊 z_grasp final usado: {z_grasp:.4f}m')
+            # Capture pre-pick Z for layer depletion detection
+            _z_before_pick_robot_mm = z_grasp * 1000.0 if z_grasp is not None else None
             self.get_logger().info('─' * 50)
             _juice_name = {JUICE_TYPE_MANGO: 'MANGO', JUICE_TYPE_MORA: 'MORA',
                            JUICE_TYPE_UNKNOWN: 'DESCONOCIDO'}.get(
@@ -796,6 +849,10 @@ class DepalletizerNode(Node):
                       JUICE_TYPE_UNKNOWN: 'DESCONOCIDO'}.get(_jt, '???')
             self.get_logger().info(
                 f'🎉 Ciclo completado. Total: {self.picked_count} | 🧃 Tipo: {_jname}')
+
+            # Check if the top pallet layer has been depleted
+            if _z_before_pick_robot_mm is not None and self._pallet_config is not None:
+                self._check_and_remove_layer(_z_before_pick_robot_mm)
 
         except Exception as e:
             self.get_logger().error(f'❌ Excepción: {e}')
