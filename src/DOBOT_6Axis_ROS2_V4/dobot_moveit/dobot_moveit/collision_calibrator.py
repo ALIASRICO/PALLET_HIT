@@ -681,8 +681,9 @@ class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
                     print("      3 = Poste / Columna (pole)")
                     print("      4 = Suelo (floor)")
                     print("      5 = Techo (ceiling)")
+                    print("      6 = Pallet (base del pallet)")
                     type_choice = input("    Tipo: ").strip()
-                    if type_choice not in ('1', '2', '3', '4', '5'):
+                    if type_choice not in ('1', '2', '3', '4', '5', '6'):
                         print("    ⚠️  Tipo inválido.")
                         continue
 
@@ -733,6 +734,23 @@ class CollisionCalibratorNode(_NodeBase):  # type: ignore[misc]
                                 continue
                             data = self._calibrate_techo(suelo_z)
                             techo_z = data['z_mm']
+                        elif type_choice == '6':  # pallet
+                            # Check: only one pallet allowed
+                            pallet_exists = any(v.get('type') == 'pallet' for v in objects.values())
+                            if pallet_exists:
+                                print("    ❌ Ya hay un pallet calibrado. Elimínalo primero (opción 3).")
+                                continue
+                            # Force name to 'pallet'
+                            name = 'pallet'
+                            print()
+                            print("    ⚠️  IMPORTANTE: El pallet debe estar COMPLETAMENTE VACÍO")
+                            print("    ⚠️  (sin cajas) durante esta calibración.")
+                            print()
+                            data = self._calibrate_box('pallet', 'PALLET (BASE VACÍO)')
+                            data['type'] = 'pallet'  # Override the 'box' type set by _calibrate_box
+                            objects[name] = data
+                            print(f"\n    ✅ 'pallet' calibrado (type=pallet)")
+                            continue  # Skip the generic 'objects[name] = data' at the bottom
 
                         objects[name] = data
                         print(f"\n    ✅ '{name}' añadido ({data.get('type', '?')})")
